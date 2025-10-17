@@ -1,103 +1,182 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import React, { useEffect, useMemo, useState } from 'react';
+import LoginForm from './components/login/Login';
+import Button from './components/Button';
+import { AuthResult, AuthState } from '../../AuthResult';
+import SignupForm from './components/login/signup/Sign';
+import Sidebar from './components/sidebar/Sidebar';
+import Script from 'next/script';
+import Swal from 'sweetalert2';
+
+// ---- Faux API helpers (replace with real routes later) ----
+async function apiLogin(
+  usernameOrEmail: string,
+  password: string
+): Promise<AuthResult> {
+  // TODO: call your real API: await fetch('/api/auth/login', { ... })
+  // For now, pretend success if any non-empty creds:
+  if (usernameOrEmail && password) {
+    return {
+      success: true,
+      user_id: 1,
+      username: usernameOrEmail.split('@')[0],
+      token: 'demo-token-' + Math.random().toString(36).slice(2),
+    };
+  }
+  Swal.fire({
+    icon: 'error',
+    title: 'Oops...',
+    text: 'Invalid credentials!',
+  });
+}
+
+async function apiLogout(_token: string | null): Promise<void> {
+  // TODO: call your real API: await fetch('/api/auth/logout', { ... })
+  return;
+}
+
+async function apiValidateSession(token: string | null): Promise<boolean> {
+  // TODO: call your real API: await fetch('/api/auth/validate', { ... })
+  return Boolean(token); // demo: any token is “valid”
+}
+
+// ---- Small UI bits ----
+function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <input
+      {...props}
+      className={
+        'w-full rounded-xl border p-3 outline-none transition ' +
+        'border-neutral-300 focus:border-blue-500 ' +
+        (props.className ?? '')
+      }
+    />
+  );
+}
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+// ---- Auth Forms ----
+<LoginForm />;
+
+// ---- Main Page ----
+export default function Page() {
+  // Replaces st.session_state for auth-only (we’ll add the rest in later parts)
+  const [auth, setAuth] = useState<AuthState>({
+    authenticated: false,
+    userId: null,
+    username: null,
+    authToken: null,
+  });
+  const [showSignup, setShowSignup] = useState(false);
+  const [validating, setValidating] = useState(true);
+
+  // On mount, load token from localStorage & validate
+  useEffect(() => {
+    const token =
+      typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
+    const username =
+      typeof window !== 'undefined' ? localStorage.getItem('username') : null;
+    const userIdStr =
+      typeof window !== 'undefined' ? localStorage.getItem('userId') : null;
+
+    (async () => {
+      const ok = await apiValidateSession(token);
+      if (ok && token && username && userIdStr) {
+        setAuth({
+          authenticated: true,
+          authToken: token,
+          username,
+          userId: Number(userIdStr),
+        });
+      }
+      setValidating(false);
+    })();
+  }, []);
+
+  const handleAuthSuccess = (r: Extract<AuthResult, { success: true }>) => {
+    // persist
+    localStorage.setItem('authToken', r.token);
+    localStorage.setItem('username', r.username);
+    localStorage.setItem('userId', String(r.user_id));
+    // state
+    setAuth({
+      authenticated: true,
+      userId: r.user_id,
+      username: r.username,
+      authToken: r.token,
+    });
+    setShowSignup(false);
+  };
+
+  const logout = async () => {
+    await apiLogout(auth.authToken);
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('username');
+    localStorage.removeItem('userId');
+    setAuth({
+      authenticated: false,
+      userId: null,
+      username: null,
+      authToken: null,
+    });
+  };
+
+  const topBar = useMemo(
+    () => (
+      <header className="">
+        <Sidebar />
+      </header>
+    ),
+    [auth.authenticated, auth.username]
+  );
+
+  if (validating) {
+    return (
+      <div className="grid min-h-dvh place-items-center">
+        <div className="rounded-2xl border p-6 shadow-sm">
+          <p className="text-neutral-700">Validating session…</p>
         </div>
+      </div>
+    );
+  }
+
+  // Gate: if not authenticated, show login/signup
+  if (!auth.authenticated) {
+    return (
+      <main className="mx-auto grid min-h-dvh max-w-6xl place-items-center px-4 py-10">
+        <section className="w-full">
+          {showSignup ? (
+            <SignupForm
+              onSignupSuccess={handleAuthSuccess}
+              backToLogin={() => setShowSignup(false)}
+            />
+          ) : (
+            <LoginForm
+              onLoginSuccess={handleAuthSuccess}
+              switchToSignup={() => setShowSignup(true)}
+            />
+          )}
+        </section>
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+    );
+  }
+
+  // Authenticated shell — we’ll build the real app pages in later parts
+  return (
+    <main className="min-h-dvh">
+      {topBar}
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        <div className="rounded-2xl border p-6 shadow-sm">
+          <h1 className="mb-2 text-2xl font-semibold">
+            Welcome, {auth.username}!
+          </h1>
+          <p className="text-neutral-600"></p>
+        </div>
+      </div>
+      <Script
+        src="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.js"
+        strategy="afterInteractive"
+      />
+    </main>
   );
 }

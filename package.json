@@ -9,19 +9,24 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "daisyui": "^5.3.7",
+    "flowbite": "^3.1.2",
+    "flowbite-react": "^0.12.9",
+    "next": "15.5.5",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "next": "15.5.5"
+    "sweetalert2": "^11.26.2"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4.1.14",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
     "eslint": "^9",
     "eslint-config-next": "15.5.5",
-    "@eslint/eslintrc": "^3"
+    "tailwindcss": "^4.1.14",
+    "typescript": "^5",
+    "webpack-cli": "^6.0.1"
   }
 }

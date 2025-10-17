@@ -1,7 +1,9 @@
+// next.config.ts
 import type { NextConfig } from "next";
+import withFlowbiteReact from "flowbite-react/plugin/nextjs";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // your existing config
 };
 
-export default nextConfig;
+export default nextConfig; // <- no withFlowbiteReact()
