@@ -13,9 +13,11 @@
     "flowbite": "^3.1.2",
     "flowbite-react": "^0.12.9",
     "next": "15.5.5",
+    "papaparse": "^5.5.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "sweetalert2": "^11.26.2"
+    "sweetalert2": "^11.26.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

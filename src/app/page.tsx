@@ -2,11 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import LoginForm from './components/login/Login';
-import Button from './components/Button';
 import { AuthResult, AuthState } from '../../AuthResult';
 import SignupForm from './components/login/signup/Sign';
-import Sidebar from './components/sidebar/Sidebar';
-import Script from 'next/script';
+import Navbar from './components/navbar/Navbar';
 import Swal from 'sweetalert2';
 
 // ---- Faux API helpers (replace with real routes later) ----
@@ -39,20 +37,6 @@ async function apiLogout(_token: string | null): Promise<void> {
 async function apiValidateSession(token: string | null): Promise<boolean> {
   // TODO: call your real API: await fetch('/api/auth/validate', { ... })
   return Boolean(token); // demo: any token is “valid”
-}
-
-// ---- Small UI bits ----
-function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...props}
-      className={
-        'w-full rounded-xl border p-3 outline-none transition ' +
-        'border-neutral-300 focus:border-blue-500 ' +
-        (props.className ?? '')
-      }
-    />
-  );
 }
 
 // ---- Auth Forms ----
@@ -124,7 +108,7 @@ export default function Page() {
   const topBar = useMemo(
     () => (
       <header className="">
-        <Sidebar />
+        <Navbar />
       </header>
     ),
     [auth.authenticated, auth.username]
@@ -165,18 +149,6 @@ export default function Page() {
   return (
     <main className="min-h-dvh">
       {topBar}
-      <div className="mx-auto max-w-6xl px-4 py-8">
-        <div className="rounded-2xl border p-6 shadow-sm">
-          <h1 className="mb-2 text-2xl font-semibold">
-            Welcome, {auth.username}!
-          </h1>
-          <p className="text-neutral-600"></p>
-        </div>
-      </div>
-      <Script
-        src="https://cdn.jsdelivr.net/npm/flowbite@3.1.2/dist/flowbite.min.js"
-        strategy="afterInteractive"
-      />
     </main>
   );
 }
