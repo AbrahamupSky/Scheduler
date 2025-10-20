@@ -2,59 +2,80 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import UploadData from '../pages/UploadData';
+import TeamData from '../pages/TeamData';
 import SchedulingRules from '../pages/SchedulingRules';
 import IrregularEvents from '../pages/IrregularEvents';
 import GenerateSchedule from '../pages/GenerateSchedule';
+import ViewSchedule from '../pages/ViewSchedule';
+import ExportSchedule from '../pages/ExportSchedule';
+import SavedSchedules from '../pages/SavedSchedules';
+
+// ❌ REMOVE this: import router from 'next/router';
 
 // Sample data - replace with actual data from your database
 const availabilityRows: any[] = [];
 const shiftsRows: any[] = [];
 const events: any[] = [];
 
-async function apiLogout(_token: string | null): Promise<void> {
-  return;
+export async function apiValidateSession(
+  token: string | null
+): Promise<boolean> {
+  if (!token) return false;
+  const res = await fetch('/api/auth/validate', {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+  });
+  if (!res.ok) return false;
+  const data = await res.json();
+  return Boolean(data?.valid);
 }
 
-// small page header
-function ContentHeader({
-  title,
-  subtitle,
-}: {
-  title: string;
-  subtitle?: string;
-}) {
-  return (
-    <header className="mb-6">
-      <h1 className="text-2xl font-semibold">{title}</h1>
-      {subtitle ? (
-        <p className="mt-1 text-sm text-neutral-600">{subtitle}</p>
-      ) : null}
-    </header>
-  );
+export async function apiLogout(token: string | null): Promise<void> {
+  await fetch('/api/auth/logout', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token ?? ''}` },
+  }).catch(() => {});
 }
 
-// auth mirror for username display
+/** Keep navbar in sync with localStorage auth and cross-tab changes */
 function useAuthMirror() {
   const [authenticated, setAuthenticated] = useState(false);
   const [username, setUsername] = useState<string | null>(null);
 
   useEffect(() => {
-    const username =
-      typeof window !== 'undefined' ? localStorage.getItem('username') : null;
-    const userIdStr =
-      typeof window !== 'undefined' ? localStorage.getItem('userId') : null;
-    const token = localStorage.getItem('authToken');
-    const user = localStorage.getItem('username');
-    setAuthenticated(Boolean(token));
-    setUsername(user);
-
-    const onLogout = () => {
-      setAuthenticated(false);
-      setUsername(null);
+    const read = () => {
+      const token =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('authToken')
+          : null;
+      const user =
+        typeof window !== 'undefined' ? localStorage.getItem('username') : null;
+      setAuthenticated(Boolean(token));
+      setUsername(user && user !== 'undefined' ? user : null);
     };
+
+    // initial read
+    read();
+
+    // react to app-wide events
+    const onLogin = () => read();
+    const onLogout = () => read();
+    window.addEventListener('auth:login', onLogin);
     window.addEventListener('auth:logout', onLogout);
-    return () => window.removeEventListener('auth:logout', onLogout);
+
+    // cross-tab sync
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'authToken' || e.key === 'username' || e.key === 'userId')
+        read();
+    };
+    window.addEventListener('storage', onStorage);
+
+    return () => {
+      window.removeEventListener('auth:login', onLogin);
+      window.removeEventListener('auth:logout', onLogout);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   return { authenticated, username };
@@ -102,117 +123,107 @@ export default function AppShell() {
 
   const { authenticated, username } = useAuthMirror();
 
+  // local state to hold a generated/exported schedule and its metadata
+  const [generatedSchedule, setGeneratedSchedule] = useState<any[] | null>(
+    null
+  );
+  const [startDateISO, setStartDateISO] = useState<string | null>(null);
+  const [endDateISO, setEndDateISO] = useState<string | null>(null);
+  const [teamName, setTeamName] = useState<string | null>(null);
+
   const [page, setPage] = useState<
-    | 'Upload Data'
+    | 'Team Data'
     | 'Scheduling Rules'
     | 'Irregular Events'
     | 'Generate Schedule'
     | 'View Schedule'
     | 'Export'
     | 'Saved Schedules'
-  >('Upload Data');
+  >('Team Data');
 
   const Body = useMemo(() => {
     switch (page) {
-      case 'Upload Data':
-        return (
-          <>
-            <UploadData teamId={null} teamName={null} />
-          </>
-        );
+      case 'Team Data':
+        return <TeamData teamId={null} teamName={null} />;
       case 'Scheduling Rules':
         return (
-          <>
-            <SchedulingRules
-              initialRules={undefined /* or from your DB */}
-              onSave={async (rules) => {
-                // TODO: call your API to persist (db_manager-style)
-                console.log('Saving rules', rules);
-              }}
-            />
-          </>
+          <SchedulingRules
+            initialRules={undefined}
+            onSave={async (rules) => {
+              console.log('Saving rules', rules);
+            }}
+          />
         );
       case 'Irregular Events':
         return <IrregularEvents />;
       case 'Generate Schedule':
         return (
           <GenerateSchedule
-            availability={availabilityRows /* or fetch from DB */}
-            shifts={shiftsRows /* or fetch from DB */}
-            irregularEvents={events /* optional */}
-            onGenerate={async ({
-              startDate,
-              endDate,
-              optimization,
-              allowOvertime,
-              availability,
-              shifts,
-              irregularEvents,
-            }) => {
-              // TODO: call your TeamScheduler equivalent; return ScheduleRow[]
-              // return await scheduler.generate({...})
-              return []; // or let the component’s fallbackGenerate run by omitting onGenerate
+            availability={availabilityRows}
+            shifts={shiftsRows}
+            irregularEvents={events}
+            onGenerate={async () => {
+              return [];
             }}
-            onSaveSchedule={async ({
-              name,
-              schedule,
-              startDate,
-              endDate,
-              optimization,
-              allowOvertime,
-            }) => {
-              // TODO: persist to DB
-              console.log('save schedule', {
-                name,
-                schedule,
-                startDate,
-                endDate,
-                optimization,
-                allowOvertime,
-              });
+            onSaveSchedule={async () => {
+              // persist
             }}
           />
         );
       case 'View Schedule':
-        return (
-          <>
-            <ContentHeader
-              title="📋 View Schedule"
-              subtitle="Grid view, conflict checks, and quick stats."
-            />
-            <section className="rounded-2xl border p-6 text-sm text-neutral-700">
-              <p>Stub: schedule dataframe/grid goes here.</p>
-            </section>
-          </>
-        );
+        return <ViewSchedule />;
       case 'Export':
         return (
-          <>
-            <ContentHeader
-              title="📤 Export"
-              subtitle="CSV/Excel export options and clipboard copy."
-            />
-            <section className="rounded-2xl border p-6 text-sm text-neutral-700">
-              <p>Stub: export controls here.</p>
-            </section>
-          </>
+          <ExportSchedule
+            schedule={generatedSchedule}
+            startDate={startDateISO}
+            endDate={endDateISO}
+            teamName={teamName}
+            onAfterExport={(file, fmt) => console.log('exported', file, fmt)}
+          />
         );
       case 'Saved Schedules':
         return (
-          <>
-            <ContentHeader
-              title="💾 Saved Schedules"
-              subtitle="Load, inspect, or delete past schedules."
-            />
-            <section className="rounded-2xl border p-6 text-sm text-neutral-700">
-              <p>Stub: saved schedules list & actions.</p>
-            </section>
-          </>
+          <SavedSchedules
+            fetchSavedSchedules={async () => {
+              const teamId = Number(localStorage.getItem('currentTeamId'));
+              const res = await fetch(`/api/teams/${teamId}/schedules`, {
+                cache: 'no-store',
+              });
+              if (!res.ok) throw new Error('Failed to load schedules');
+              const list = await res.json();
+              return list.map((s: any) => ({
+                id: s.id,
+                name: s.name,
+                start_date: s.startDate,
+                end_date: s.endDate,
+                created_at: s.createdAt,
+                optimization_priority: s.optimization,
+              }));
+            }}
+            onLoadSchedule={async (id) => {
+              const res = await fetch(`/api/schedules/${id}`, {
+                cache: 'no-store',
+              });
+              if (!res.ok) throw new Error('Not found');
+              const s = await res.json();
+              return s.data as any[];
+            }}
+            onDeleteSchedule={async (id) => {
+              const res = await fetch(`/api/schedules/${id}`, {
+                method: 'DELETE',
+              });
+              if (!res.ok) throw new Error('Delete failed');
+            }}
+            onLoaded={({ schedule, startDate, endDate }) => {
+              // setGeneratedSchedule(schedule); setStartDateISO(startDate); setEndDateISO(endDate); setPage('View Schedule');
+            }}
+          />
         );
       default:
         return null;
     }
-  }, [page]);
+  }, [page, generatedSchedule, startDateISO, endDateISO, teamName]);
 
   return (
     <main className="min-h-dvh bg-white dark:bg-gray-900">
@@ -223,18 +234,22 @@ export default function AppShell() {
             <h2 className="truncate text-lg font-semibold text-gray-800 dark:text-gray-100">
               Auto-Scheduler
             </h2>
-            {authenticated && (
+
+            {/* Only render line if we have a real username */}
+            {authenticated && username ? (
               <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
                 Signed in as{' '}
-                <span className="font-medium">{username ?? '—'}</span>
+                <span className="text-base font-semibold text-gray-900 underline dark:text-white decoration-indigo-500">
+                  {username}
+                </span>
               </p>
-            )}
+            ) : null}
           </div>
 
           {/* NAV BUTTONS */}
           <div className="hidden gap-2 md:flex">
             {[
-              'Upload Data',
+              'Team Data',
               'Scheduling Rules',
               'Irregular Events',
               'Generate Schedule',

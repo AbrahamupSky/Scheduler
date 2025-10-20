@@ -3,7 +3,10 @@
 import React, { useMemo, useState } from 'react';
 
 /** ---------- Types ---------- */
-export type OptimizationPriority = 'Balanced Workload' | 'Minimize Conflicts' | 'Maximize Coverage';
+export type OptimizationPriority =
+  | 'Balanced Workload'
+  | 'Minimize Conflicts'
+  | 'Maximize Coverage';
 
 export type ScheduleCell = string | null; // e.g., "08:00–16:00" or null
 export type ScheduleRow = { Name: string; [col: string]: ScheduleCell }; // Start/End columns per day
@@ -11,9 +14,9 @@ export type ScheduleRow = { Name: string; [col: string]: ScheduleCell }; // Star
 export type IrregularEvent = {
   person: string;
   type: string;
-  date: string;        // 'YYYY-MM-DD'
-  start_time: string;  // 'HH:MM'
-  end_time: string;    // 'HH:MM'
+  date: string; // 'YYYY-MM-DD'
+  start_time: string; // 'HH:MM'
+  end_time: string; // 'HH:MM'
   description?: string;
   ignore_scheduling_rules: boolean;
 };
@@ -29,7 +32,7 @@ export type GenerateScheduleProps = {
   // Hook this to your scheduler backend
   onGenerate?: (args: {
     startDate: string; // 'YYYY-MM-DD'
-    endDate: string;   // 'YYYY-MM-DD'
+    endDate: string; // 'YYYY-MM-DD'
     optimization: OptimizationPriority;
     allowOvertime: boolean;
     availability: any[] | null;
@@ -60,7 +63,9 @@ function dayNamesFromRange(startISO: string, endISO: string) {
   if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return out;
 
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const label = d.toLocaleDateString(undefined, { weekday: 'long' }) + ' ' +
+    const label =
+      d.toLocaleDateString(undefined, { weekday: 'long' }) +
+      ' ' +
       d.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit' });
     const key = d.toISOString().slice(0, 10);
     out.push({ label, key });
@@ -95,7 +100,9 @@ export default function GenerateSchedule({
 }: GenerateScheduleProps) {
   // params
   const todayISO = new Date().toISOString().slice(0, 10);
-  const nextWeekISO = new Date(Date.now() + 6 * 86400000).toISOString().slice(0, 10);
+  const nextWeekISO = new Date(Date.now() + 6 * 86400000)
+    .toISOString()
+    .slice(0, 10);
 
   const [startDate, setStartDate] = useState<string>(todayISO);
   const [endDate, setEndDate] = useState<string>(nextWeekISO);
@@ -107,10 +114,13 @@ export default function GenerateSchedule({
   const [schedule, setSchedule] = useState<ScheduleRow[] | null>(null);
   const [generating, setGenerating] = useState(false);
   const [saveName, setSaveName] = useState<string>(
-    `Schedule_${new Date().toISOString().slice(0,16).replace('T','_')}`
+    `Schedule_${new Date().toISOString().slice(0, 16).replace('T', '_')}`
   );
 
-  const days = useMemo(() => dayNamesFromRange(startDate, endDate), [startDate, endDate]);
+  const days = useMemo(
+    () => dayNamesFromRange(startDate, endDate),
+    [startDate, endDate]
+  );
   const dayKeys = days.map((d) => d.key);
 
   const issues = useMemo(
@@ -119,14 +129,23 @@ export default function GenerateSchedule({
   );
 
   const summary = useMemo(() => {
-    if (!schedule) return { totalShifts: 0, activeEmployees: 0, daysCovered: dayKeys.length };
+    if (!schedule)
+      return {
+        totalShifts: 0,
+        activeEmployees: 0,
+        daysCovered: dayKeys.length,
+      };
     const startCols = dayKeys.map((k) => `${k} Start`);
     let total = 0;
     for (const r of schedule) {
       for (const c of startCols) total += r[c] ? 1 : 0;
     }
     const active = schedule.filter((r) => startCols.some((c) => !!r[c])).length;
-    return { totalShifts: total, activeEmployees: active, daysCovered: dayKeys.length };
+    return {
+      totalShifts: total,
+      activeEmployees: active,
+      daysCovered: dayKeys.length,
+    };
   }, [schedule, dayKeys]);
 
   const eventsInWindow = useMemo(() => {
@@ -197,7 +216,8 @@ export default function GenerateSchedule({
       <div>
         <h1 className="text-2xl font-semibold">⚙️ Generate Schedule</h1>
         <p className="text-sm text-neutral-600">
-          Pick the date range and priorities, then generate an optimized schedule.
+          Pick the date range and priorities, then generate an optimized
+          schedule.
         </p>
       </div>
 
@@ -225,11 +245,15 @@ export default function GenerateSchedule({
           </div>
 
           <div className="space-y-3">
-            <label className="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Optimization Priority</label>
+            <label className="block mb-2 text-sm font-medium text-gray-900 dark:text-white">
+              Optimization Priority
+            </label>
             <select
               className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-900 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
               value={optimization}
-              onChange={(e) => setOptimization(e.target.value as OptimizationPriority)}
+              onChange={(e) =>
+                setOptimization(e.target.value as OptimizationPriority)
+              }
             >
               <option>Balanced Workload</option>
               <option>Minimize Conflicts</option>
@@ -238,7 +262,9 @@ export default function GenerateSchedule({
           </div>
 
           <div className="space-y-3">
-            <label className="block mb-2 text-sm font-medium text-gray-900 dark:text-white">Allow Overtime</label>
+            <label className="block mb-2 text-sm font-medium text-gray-900 dark:text-white">
+              Allow Overtime
+            </label>
             <select
               className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-900 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
               value={allowOvertime ? 'yes' : 'no'}
@@ -259,7 +285,11 @@ export default function GenerateSchedule({
                 ? 'bg-neutral-100 text-neutral-400'
                 : 'bg-blue-600 text-white hover:bg-blue-700'
             }`}
-            title={!availability || !shifts ? 'Upload availability and shifts first' : 'Generate schedule'}
+            title={
+              !availability || !shifts
+                ? 'Upload availability and shifts first'
+                : 'Generate schedule'
+            }
           >
             {generating ? 'Generating…' : '🚀 Generate Schedule'}
           </button>
@@ -268,9 +298,13 @@ export default function GenerateSchedule({
 
       {/* Irregular events summary */}
       <section className="rounded-2xl border p-5">
-        <h2 className="mb-2 text-lg font-semibold">🎯 Irregular Events in Range</h2>
+        <h2 className="mb-2 text-lg font-semibold">
+          🎯 Irregular Events in Range
+        </h2>
         {eventsInWindow.length === 0 ? (
-          <p className="text-sm text-neutral-600">No events for the selected period.</p>
+          <p className="text-sm text-neutral-600">
+            No events for the selected period.
+          </p>
         ) : (
           <ul className="text-sm text-neutral-700">
             {eventsInWindow.map((ev, idx) => (
@@ -282,14 +316,22 @@ export default function GenerateSchedule({
                   day: '2-digit',
                 })}{' '}
                 ({ev.start_time}-{ev.end_time}) •{' '}
-                {ev.ignore_scheduling_rules ? '🔓 Ignores rules' : '⚠️ Follows rules'}
-                {ev.description ? <> — <span className="text-neutral-600">{ev.description}</span></> : null}
+                {ev.ignore_scheduling_rules
+                  ? '🔓 Ignores rules'
+                  : '⚠️ Follows rules'}
+                {ev.description ? (
+                  <>
+                    {' '}
+                    — <span className="text-neutral-600">{ev.description}</span>
+                  </>
+                ) : null}
               </li>
             ))}
           </ul>
         )}
         <p className="mt-2 text-xs text-neutral-500">
-          Events marked “Ignores rules” should exclude people from regular shift assignment during those times.
+          Events marked “Ignores rules” should exclude people from regular shift
+          assignment during those times.
         </p>
       </section>
 
@@ -297,7 +339,9 @@ export default function GenerateSchedule({
       {schedule && (
         <>
           <section className="rounded-2xl border p-5">
-            <h2 className="mb-2 text-lg font-semibold">📋 Weekly Schedule Grid</h2>
+            <h2 className="mb-2 text-lg font-semibold">
+              📋 Weekly Schedule Grid
+            </h2>
             <div className="overflow-auto rounded-lg border relative overflow-x-auto shadow-md sm:rounded-lg">
               <table className="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400">
                 <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-4000">
@@ -305,15 +349,23 @@ export default function GenerateSchedule({
                     <th className="px-6 py-3">Name</th>
                     {days.map((d) => (
                       <th key={d.key} className="px-3 py-2">
-                        {d.label} <span className="block text-xs text-neutral-500">Start / End</span>
+                        {d.label}{' '}
+                        <span className="block text-xs text-neutral-500">
+                          Start / End
+                        </span>
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {schedule.map((row) => (
-                    <tr key={row.Name} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700 border-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600">
-                      <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap dark:text-white">{row.Name}</td>
+                    <tr
+                      key={row.Name}
+                      className="bg-white border-b dark:bg-gray-800 dark:border-gray-700 border-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600"
+                    >
+                      <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                        {row.Name}
+                      </td>
                       {dayKeys.map((k) => {
                         const s = row[`${k} Start`];
                         const e = row[`${k} End`];
@@ -336,32 +388,43 @@ export default function GenerateSchedule({
               </table>
             </div>
             <p className="mt-2 text-xs text-neutral-500">
-              Each day has “Start” and “End” cells. Empty means no shift assigned.
+              Each day has “Start” and “End” cells. Empty means no shift
+              assigned.
             </p>
           </section>
 
           {/* Stats */}
           <section className="rounded-2xl border p-5">
-            <h2 className="mb-3 text-lg font-semibold">📊 Schedule Statistics</h2>
+            <h2 className="mb-3 text-lg font-semibold">
+              📊 Schedule Statistics
+            </h2>
             <div className="grid gap-3 md:grid-cols-3">
               <div className="rounded-xl border p-3 text-sm">
                 <div>Total Shifts Assigned</div>
-                <div className="text-lg font-semibold">{summary.totalShifts}</div>
+                <div className="text-lg font-semibold">
+                  {summary.totalShifts}
+                </div>
               </div>
               <div className="rounded-xl border p-3 text-sm">
                 <div>Active Employees</div>
-                <div className="text-lg font-semibold">{summary.activeEmployees}</div>
+                <div className="text-lg font-semibold">
+                  {summary.activeEmployees}
+                </div>
               </div>
               <div className="rounded-xl border p-3 text-sm">
                 <div>Days Covered</div>
-                <div className="text-lg font-semibold">{summary.daysCovered}</div>
+                <div className="text-lg font-semibold">
+                  {summary.daysCovered}
+                </div>
               </div>
             </div>
           </section>
 
           {/* Conflicts */}
           <section className="rounded-2xl border p-5">
-            <h2 className="mb-3 text-lg font-semibold">🔍 Conflict Detection</h2>
+            <h2 className="mb-3 text-lg font-semibold">
+              🔍 Conflict Detection
+            </h2>
             {issues.length ? (
               <ul className="list-disc pl-5 text-sm text-amber-800">
                 {issues.map((m, i) => (
@@ -369,30 +432,40 @@ export default function GenerateSchedule({
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-emerald-700">✅ No conflicts detected.</p>
+              <p className="text-sm text-emerald-700">
+                ✅ No conflicts detected.
+              </p>
             )}
           </section>
 
           {/* Save */}
-          {onSaveSchedule && (
-            <section className="rounded-2xl border p-5">
-              <h2 className="mb-3 text-lg font-semibold">💾 Save Schedule</h2>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  value={saveName}
-                  onChange={(e) => setSaveName(e.target.value)}
-                  className="w-64 rounded-lg border p-2 text-sm"
-                  placeholder="Schedule name"
-                />
-                <button
-                  onClick={save}
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
-                >
-                  Save to Database
-                </button>
-              </div>
-            </section>
-          )}
+          <button
+            onClick={async () => {
+              if (!schedule || !schedule.length) return;
+              const teamId = Number(localStorage.getItem('currentTeamId'));
+              const payload = {
+                name: `Schedule_${startDate}_to_${endDate}`,
+                startDateISO: startDate,
+                endDateISO: endDate,
+                optimization: 'BALANCED_WORKLOAD', // or your setting
+                allowOvertime: false, // from UI state
+                data: schedule, // the grid rows array you already have
+              };
+              const res = await fetch(`/api/teams/${teamId}/schedules`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              });
+              if (!res.ok) {
+                alert('Save failed');
+                return;
+              }
+              alert('✅ Saved to database');
+            }}
+            className="ml-2 rounded-lg border px-4 py-2 text-sm hover:bg-neutral-50"
+          >
+            💾 Save to DB
+          </button>
         </>
       )}
     </div>

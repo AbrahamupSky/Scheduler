@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Weekday {
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+}
+
+enum EventType {
+  MEETING
+  TIME_OFF
+  TRAINING
+  SPECIAL_ASSIGNMENT
+  HOLIDAY
+  COMPANY_EVENT
+  OTHER
+}
+
+enum OptimizationPriority {
+  BALANCED_WORKLOAD
+  MINIMIZE_CONFLICTS
+  MAXIMIZE_COVERAGE
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  username     String    @unique
+  email        String    @unique
+  passwordHash String
+  sessions     Session[]
+  // User owns many Teams
+  teams        Team[]    @relation("OwnerTeams")
+  createdAt    DateTime  @default(now())
+}
+
+model Team {
+  id             Int               @id @default(autoincrement())
+  name           String
+  // Opposite side of User.teams
+  owner          User              @relation("OwnerTeams", fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId        Int
+
+  // Opposite sides for the relations below:
+  members        TeamMember[]
+  shiftTemplates ShiftTemplate[]
+  irregularEvents IrregularEvent[]
+  schedules      SavedSchedule[]
+  rules          SchedulingRules?   // 1:1 (enforced by unique teamId in SchedulingRules)
+
+  createdAt      DateTime          @default(now())
+  @@unique([ownerId, name]) // prevent duplicate team names per owner
+}
+
+model TeamMember {
+  id          Int                 @id @default(autoincrement())
+  team        Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      Int
+  name        String
+  job         String?
+  position    String?
+  // Opposite side of AvailabilityWindow.member
+  availability AvailabilityWindow[]
+
+  createdAt   DateTime            @default(now())
+  @@unique([teamId, name])  // same person name once per team
+}
+
+model AvailabilityWindow {
+  id        Int         @id @default(autoincrement())
+  // Opposite field defined on TeamMember.availability
+  member    TeamMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  memberId  Int
+  dayOfWeek Int         // 0-6 or 1-7, your choice
+  startTime String      // "HH:MM"
+  endTime   String      // "HH:MM"
+
+  @@index([memberId, dayOfWeek])
+}
+
+model ShiftTemplate {
+  id         Int    @id @default(autoincrement())
+  team       Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId     Int
+  shift      String
+  jobType    String
+  day        String   // or Int if you prefer dayOfWeek
+  startTime  String   // "HH:MM"
+  endTime    String   // "HH:MM"
+  required   Int
+
+  @@index([teamId, day, jobType, startTime, endTime])
+}
+
+model IrregularEvent {
+  id        Int    @id @default(autoincrement())
+  // Opposite field defined on Team.irregularEvents
+  team      Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    Int
+  title     String
+  date      DateTime
+  startTime String
+  endTime   String
+  jobType   String?
+}
+
+model SavedSchedule {
+  id          Int      @id @default(autoincrement())
+  // Opposite field defined on Team.schedules
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      Int
+  name        String
+  startDate   DateTime
+  endDate     DateTime
+  data        Json
+  optimization String?
+  createdAt   DateTime @default(now())
+}
+
+model SchedulingRules {
+  id      Int   @id @default(autoincrement())
+  // Opposite field defined on Team.rules
+  team    Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId  Int   @unique
+
+  // add your rule fields here...
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+}
