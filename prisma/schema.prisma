@@ -129,11 +129,25 @@ model SavedSchedule {
 
 model SchedulingRules {
   id      Int   @id @default(autoincrement())
-  // Opposite field defined on Team.rules
   team    Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId  Int   @unique
 
-  // add your rule fields here...
+  // core constraints
+  minHoursPerWeek    Int     @default(0)
+  maxHoursPerWeek    Int     @default(40)
+  maxDaysPerWeek     Int     @default(6)
+  minRestHours       Int     @default(8)
+
+  // shift-level constraints
+  maxShiftHours      Int     @default(10)
+  allowOvertime      Boolean @default(false)
+
+  // fairness / preferences
+  enforceFairness    Boolean @default(true)
+  preferAvailability Boolean @default(true)
+
+  notes              String?
+  updatedAt          DateTime @updatedAt
 }
 
 model Session {

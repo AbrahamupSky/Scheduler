@@ -1,461 +1,202 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
+import React, { useEffect, useMemo, useState } from 'react';
+import Swal from 'sweetalert2';
+import Link from 'next/link';
 
-/** -------- Types -------- */
-export type RuleValue = number | boolean;
-export type RuleType = 'int' | 'float' | 'bool';
+const Toast = Swal.mixin({
+  toast: true,
+  position: 'top',
+  showConfirmButton: false,
+  timer: 2500,
+  timerProgressBar: true,
+  didOpen: (toast) => {
+    toast.onmouseenter = Swal.stopTimer;
+    toast.onmouseleave = Swal.resumeTimer;
+  },
+});
 
-export type Rule = {
-  name: string;
-  description: string;
-  type: RuleType;
-  value: RuleValue;
-  enabled: boolean;
-  category: 'Daily' | 'Time' | 'Workload' | 'Advanced' | 'Custom';
+type RulesV1 = {
+  minHoursPerWeek: number;
+  maxHoursPerWeek: number;
+  maxDaysPerWeek: number;
+  minRestHours: number;
+
+  maxShiftHours: number;
+  allowOvertime: boolean;
+
+  enforceFairness: boolean;
+  preferAvailability: boolean;
+
+  notes: string | null;
 };
 
-export type SchedulingRulesProps = {
-  /** Optional: pass initial rules from your DB */
-  initialRules?: Rule[];
+function withDefaults(r: Partial<RulesV1> | null | undefined): RulesV1 {
+  return {
+    minHoursPerWeek: Number(r?.minHoursPerWeek ?? 0),
+    maxHoursPerWeek: Number(r?.maxHoursPerWeek ?? 40),
+    maxDaysPerWeek: Number(r?.maxDaysPerWeek ?? 6),
+    minRestHours: Number(r?.minRestHours ?? 8),
 
-  /** Called when user clicks Save */
-  onSave?: (rules: Rule[]) => Promise<void> | void;
-};
+    maxShiftHours: Number(r?.maxShiftHours ?? 10),
+    allowOvertime: Boolean(r?.allowOvertime ?? false),
 
-/** -------- Defaults (edit freely) -------- */
-function defaultRules(): Rule[] {
-  return [
-    // Daily
-    {
-      name: 'max_shifts_per_day',
-      description: 'Maximum number of shifts per person per day',
-      type: 'int',
-      value: 2,
-      enabled: true,
-      category: 'Daily',
-    },
-    {
-      name: 'max_hours_per_day',
-      description: 'Maximum total hours per person per day',
-      type: 'int',
-      value: 10,
-      enabled: true,
-      category: 'Daily',
-    },
-    {
-      name: 'overtime_threshold',
-      description: 'Daily overtime threshold (hours)',
-      type: 'int',
-      value: 8,
-      enabled: true,
-      category: 'Daily',
-    },
-    {
-      name: 'allow_split_shifts',
-      description: 'Allow split shifts within a day',
-      type: 'bool',
-      value: false,
-      enabled: true,
-      category: 'Daily',
-    },
-    {
-      name: 'allow_back_to_back_shifts',
-      description: 'Allow back-to-back shifts with no gap',
-      type: 'bool',
-      value: false,
-      enabled: true,
-      category: 'Daily',
-    },
+    enforceFairness: Boolean(r?.enforceFairness ?? true),
+    preferAvailability: Boolean(r?.preferAvailability ?? true),
 
-    // Time
-    {
-      name: 'min_break_between_shifts',
-      description: 'Minimum break (hours) between shifts',
-      type: 'int',
-      value: 10,
-      enabled: true,
-      category: 'Time',
-    },
-    {
-      name: 'min_hours_between_shifts',
-      description: 'Minimum hours between end and next start',
-      type: 'int',
-      value: 12,
-      enabled: true,
-      category: 'Time',
-    },
-    {
-      name: 'max_consecutive_days',
-      description: 'Maximum consecutive working days',
-      type: 'int',
-      value: 6,
-      enabled: true,
-      category: 'Time',
-    },
-    {
-      name: 'enforce_availability_strict',
-      description: 'Strictly enforce availability windows',
-      type: 'bool',
-      value: true,
-      enabled: true,
-      category: 'Time',
-    },
-
-    // Workload
-    {
-      name: 'max_weekly_hours',
-      description: 'Maximum weekly hours per person',
-      type: 'int',
-      value: 40,
-      enabled: true,
-      category: 'Workload',
-    },
-    {
-      name: 'balance_workload',
-      description: 'Evenly balance workload across staff',
-      type: 'bool',
-      value: true,
-      enabled: true,
-      category: 'Workload',
-    },
-    {
-      name: 'prefer_full_shifts',
-      description: 'Prefer assigning full shifts over partials',
-      type: 'bool',
-      value: true,
-      enabled: true,
-      category: 'Workload',
-    },
-    {
-      name: 'max_opening_shifts_per_week',
-      description: 'Max opening shifts per person per week',
-      type: 'int',
-      value: 3,
-      enabled: true,
-      category: 'Workload',
-    },
-    {
-      name: 'max_closing_shifts_per_week',
-      description: 'Max closing shifts per person per week',
-      type: 'int',
-      value: 3,
-      enabled: true,
-      category: 'Workload',
-    },
-
-    // Advanced
-    {
-      name: 'min_staffing_per_shift',
-      description: 'Minimum staffing per shift',
-      type: 'int',
-      value: 1,
-      enabled: true,
-      category: 'Advanced',
-    },
-    {
-      name: 'require_weekend_coverage',
-      description: 'Require weekend coverage',
-      type: 'bool',
-      value: true,
-      enabled: true,
-      category: 'Advanced',
-    },
-    {
-      name: 'min_leadership_shifts_per_week',
-      description: 'Minimum leadership shifts per week',
-      type: 'int',
-      value: 2,
-      enabled: false,
-      category: 'Advanced',
-    },
-  ];
+    notes: (r?.notes ?? null) as string | null,
+  };
 }
 
-/** -------- Utilities -------- */
-function rulesToCsv(rules: Rule[]) {
-  const rows = rules.map((r) => ({
-    name: r.name,
-    description: r.description,
-    type: r.type,
-    value: r.value,
-    enabled: r.enabled ? 1 : 0,
-    category: r.category,
-  }));
-  return Papa.unparse(rows);
+function clampInt(v: any, min: number, max: number, fallback: number) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
-function downloadCsv(filename: string, csv: string) {
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+export default function SchedulingRules() {
+  // teams list + selection
+  const [teams, setTeams] = useState<{ id: number; name: string }[] | null>(
+    null
+  );
+  const [teamsError, setTeamsError] = useState<string | null>(null);
+  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
+  const [selectedTeamName, setSelectedTeamName] = useState<string | null>(null);
 
-async function parseRulesFile(file: File): Promise<Rule[]> {
-  const ext = file.name.toLowerCase().split('.').pop();
-  if (ext === 'csv') {
-    return new Promise((resolve, reject) => {
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (res) => {
-          try {
-            resolve(rowsToRules(res.data as any[]));
-          } catch (e) {
-            reject(e);
-          }
-        },
-        error: reject,
-      });
-    });
-  }
-  // xlsx / xls
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf);
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as any[];
-  return rowsToRules(rows);
-}
+  // rules state
+  const [rules, setRules] = useState<RulesV1>(withDefaults(null));
+  const [loadingRules, setLoadingRules] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-function rowsToRules(rows: any[]): Rule[] {
-  return rows
-    .map((r) => {
-      const type = String(r.type || r.Type || '').toLowerCase() as RuleType;
-      const name = String(r.name || r.Name || '').trim();
-      const description = String(r.description || r.Description || '').trim();
-      const category =
-        (String(r.category || r.Category || '').trim() as Rule['category']) ||
-        'Custom';
+  const token =
+    typeof window !== 'undefined' ? localStorage.getItem('authToken') ?? '' : '';
 
-      if (!name || !type) return null;
+  // load teams on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        setTeamsError(null);
+        const res = await fetch('/api/teams', {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err?.error || 'Failed to load teams');
+        }
+        const data = (await res.json()) as { id: number; name: string }[];
+        setTeams(data);
 
-      let value: RuleValue;
-      if (type === 'bool') {
-        const raw = String(r.value ?? r.Value ?? '').toLowerCase();
-        value = raw === 'true' || raw === '1' || raw === 'yes';
-      } else if (type === 'int') {
-        value = Number.parseInt(String(r.value ?? r.Value ?? '0'), 10);
-      } else {
-        value = Number.parseFloat(String(r.value ?? r.Value ?? '0'));
+        // auto pick first team
+        if (data.length > 0 && !selectedTeamId) {
+          setSelectedTeamId(data[0].id);
+          setSelectedTeamName(data[0].name);
+        }
+      } catch (e: any) {
+        setTeamsError(e?.message || 'Unable to fetch teams');
+        setTeams([]);
       }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-      const enabledField = r.enabled ?? r.Enabled ?? 1;
-      const enabled =
-        String(enabledField).toLowerCase() === 'true' ||
-        String(enabledField) === '1' ||
-        enabledField === true;
+  // when selectedTeamId changes -> load rules
+  useEffect(() => {
+    if (!selectedTeamId) return;
+    (async () => {
+      setLoadingRules(true);
+      try {
+        const res = await fetch(`/api/teams/${selectedTeamId}/rules`, {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err?.error || 'Failed to load rules');
+        }
+        const payload = await res.json();
+        setRules(withDefaults(payload?.rules));
+      } catch (e: any) {
+        Toast.fire({
+          icon: 'error',
+          title: e?.message || 'Failed to load rules',
+        });
+      } finally {
+        setLoadingRules(false);
+      }
+    })();
+  }, [selectedTeamId, token]);
 
-      const rule: Rule = {
-        name,
-        description: description || name.replaceAll('_', ' '),
-        type,
-        value: (type === 'bool'
-          ? Boolean(value)
-          : type === 'int'
-          ? Number.isFinite(value)
-            ? Math.round(Number(value))
-            : 0
-          : Number(value)) as RuleValue,
-        enabled,
-        category: ['Daily', 'Time', 'Workload', 'Advanced', 'Custom'].includes(
-          category
-        )
-          ? (category as Rule['category'])
-          : 'Custom',
-      };
-      return rule;
-    })
-    .filter(Boolean) as Rule[];
-}
+  const refreshTeams = async () => {
+    try {
+      setTeamsError(null);
+      const res = await fetch('/api/teams', {
+        cache: 'no-store',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error('Failed to refresh teams');
+      const data = (await res.json()) as { id: number; name: string }[];
+      setTeams(data);
+    } catch (e: any) {
+      setTeamsError(e?.message || 'Unable to refresh teams');
+    }
+  };
 
-/** -------- Component -------- */
-export default function SchedulingRules({
-  initialRules,
-  onSave,
-}: SchedulingRulesProps) {
-  const [rules, setRules] = useState<Rule[]>(
-    initialRules && initialRules.length ? initialRules : defaultRules()
-  );
-  const [adding, setAdding] = useState({
-    name: '',
-    description: '',
-    type: 'int' as RuleType,
-    value: 1 as RuleValue,
-  });
+  const handlePickTeam = (t: { id: number; name: string }) => {
+    setSelectedTeamId(t.id);
+    setSelectedTeamName(t.name);
+  };
 
-  const groups: { label: string; category: Rule['category'] }[] = useMemo(
-    () => [
-      { label: '📅 Daily Limits', category: 'Daily' },
-      { label: '⏰ Time Rules', category: 'Time' },
-      { label: '📊 Workload Rules', category: 'Workload' },
-      { label: '🔧 Advanced Rules', category: 'Advanced' },
-      { label: '🎯 Custom Rules', category: 'Custom' },
-    ],
-    []
-  );
+  const setNum = (key: keyof RulesV1, v: any, min: number, max: number) => {
+    setRules((prev) => ({ ...prev, [key]: clampInt(v, min, max, prev[key] as any) }));
+  };
 
-  const summary = useMemo(() => {
-    const total = rules.length;
-    const enabled = rules.filter((r) => r.enabled).length;
-    return { total, enabled, disabled: total - enabled };
-  }, [rules]);
-
-  /** ------- Actions ------- */
-  const updateRule = (name: string, patch: Partial<Rule>) =>
-    setRules((prev) =>
-      prev.map((r) => (r.name === name ? { ...r, ...patch } : r))
-    );
-
-  const removeRule = (name: string) =>
-    setRules((prev) => prev.filter((r) => r.name !== name));
-
-  const addCustomRule = () => {
-    if (!adding.name.trim()) return;
-    if (rules.some((r) => r.name === adding.name)) {
-      alert('A rule with that name already exists.');
+  const save = async () => {
+    if (!selectedTeamId) {
+      Swal.fire('Error', 'Pick a team first.', 'error');
       return;
     }
-    setRules((prev) => [
-      ...prev,
-      {
-        name: adding.name.trim(),
-        description: adding.description || adding.name.replaceAll('_', ' '),
-        type: adding.type,
-        value:
-          adding.type === 'bool'
-            ? Boolean(adding.value)
-            : adding.type === 'int'
-            ? Math.round(Number(adding.value ?? 0))
-            : Number(adding.value ?? 0),
-        enabled: true,
-        category: 'Custom',
-      },
-    ]);
-    setAdding({ name: '', description: '', type: 'int', value: 1 });
-  };
-
-  const enableAll = () =>
-    setRules((prev) => prev.map((r) => ({ ...r, enabled: true })));
-  const disableAll = () =>
-    setRules((prev) => prev.map((r) => ({ ...r, enabled: false })));
-  const resetDefaults = () => setRules(defaultRules());
-
-  const exportTemplate = () => {
-    const csv = rulesToCsv(defaultRules());
-    downloadCsv('scheduling_rules_template.csv', csv);
-  };
-
-  const exportCurrent = () => {
-    const csv = rulesToCsv(rules);
-    downloadCsv('scheduling_rules_current.csv', csv);
-  };
-
-  const importFile = async (file: File) => {
+    setSaving(true);
     try {
-      const imported = await parseRulesFile(file);
-      if (!imported.length) {
-        alert('No rules found in file.');
-        return;
+      // client-side sanity
+      const payload: RulesV1 = {
+        ...rules,
+        minHoursPerWeek: clampInt(rules.minHoursPerWeek, 0, 80, 0),
+        maxHoursPerWeek: clampInt(rules.maxHoursPerWeek, 0, 80, 40),
+        maxDaysPerWeek: clampInt(rules.maxDaysPerWeek, 1, 7, 6),
+        minRestHours: clampInt(rules.minRestHours, 0, 24, 8),
+        maxShiftHours: clampInt(rules.maxShiftHours, 1, 24, 10),
+      };
+
+      if (payload.maxHoursPerWeek < payload.minHoursPerWeek) {
+        payload.maxHoursPerWeek = payload.minHoursPerWeek;
       }
-      // Merge on name: imported replaces existing, others kept
-      const map = new Map(imported.map((r) => [r.name, r]));
-      const merged: Rule[] = [];
-      const seen = new Set<string>();
-      // replace existing
-      for (const r of rules) {
-        if (map.has(r.name)) {
-          merged.push(map.get(r.name)!);
-          seen.add(r.name);
-        } else {
-          merged.push(r);
-        }
-      }
-      // add any new
-      for (const r of imported) {
-        if (!seen.has(r.name)) merged.push(r);
-      }
-      setRules(merged);
+
+      const res = await fetch(`/api/teams/${selectedTeamId}/rules`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Failed to save rules');
+
+      setRules(withDefaults(data?.rules));
+      Toast.fire({ icon: 'success', title: 'Rules saved' });
     } catch (e: any) {
-      alert(`Import failed: ${e?.message ?? e}`);
+      Swal.fire('Error', e?.message || 'Failed to save rules', 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleSave = async () => {
-    await onSave?.(rules);
-  };
-
-  /** ------- Render helpers ------- */
-  const RuleRow = ({ r }: { r: Rule }) => {
-    return (
-      <div className="grid grid-cols-[auto,1fr,auto,auto] items-center gap-3 rounded-xl border p-3">
-        {/* Toggle */}
-        <label className="inline-flex cursor-pointer items-center gap-2">
-          <input
-            type="checkbox"
-            checked={r.enabled}
-            onChange={(e) => updateRule(r.name, { enabled: e.target.checked })}
-          />
-          <span className="text-sm font-medium">{r.name}</span>
-        </label>
-
-        {/* Description */}
-        <div className="min-w-0 text-sm text-neutral-700">
-          <div className="truncate font-medium">{r.description}</div>
-          <div className="truncate text-xs text-neutral-500">{r.category}</div>
-        </div>
-
-        {/* Value editor */}
-        <div>
-          {r.type === 'bool' ? (
-            <select
-              className="rounded-lg border p-1 text-sm"
-              value={r.value ? 'true' : 'false'}
-              onChange={(e) =>
-                updateRule(r.name, { value: e.target.value === 'true' })
-              }
-            >
-              <option value="true">True</option>
-              <option value="false">False</option>
-            </select>
-          ) : (
-            <input
-              type="number"
-              step={r.type === 'float' ? '0.1' : '1'}
-              className="w-24 rounded-lg border p-1 text-sm"
-              value={String(r.value)}
-              onChange={(e) =>
-                updateRule(r.name, {
-                  value:
-                    r.type === 'int'
-                      ? Math.round(Number(e.target.value || 0))
-                      : Number(e.target.value || 0),
-                })
-              }
-            />
-          )}
-        </div>
-
-        {/* Remove (only for custom) */}
-        <div className="text-right">
-          {r.category === 'Custom' && (
-            <button
-              onClick={() => removeRule(r.name)}
-              className="rounded-lg border px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-              title="Remove custom rule"
-            >
-              Remove
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
+  const summary = useMemo(() => {
+    // just a quick status line
+    return `Min ${rules.minHoursPerWeek}h • Max ${rules.maxHoursPerWeek}h • ${rules.maxDaysPerWeek} days • Rest ${rules.minRestHours}h`;
+  }, [rules]);
 
   return (
     <div className="space-y-8">
@@ -464,180 +205,237 @@ export default function SchedulingRules({
         <div>
           <h1 className="text-2xl font-semibold">📏 Scheduling Rules</h1>
           <p className="text-sm text-neutral-600">
-            Toggle rules, adjust values, import/export, and add custom
-            constraints.
+            {selectedTeamName ? (
+              <>
+                Team: <span className="font-medium">{selectedTeamName}</span> — {summary}
+              </>
+            ) : (
+              'Pick a team to edit its rules.'
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={disableAll}
+          <Link
+            href="/teams/new"
             className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
           >
-            🔴 Disable All
-          </button>
+            + Create Team
+          </Link>
           <button
-            onClick={enableAll}
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
+            onClick={save}
+            disabled={!selectedTeamId || saving || loadingRules}
+            className={`rounded-lg px-4 py-2 text-sm text-white ${
+              !selectedTeamId || saving || loadingRules
+                ? 'bg-blue-300'
+                : 'bg-blue-600 hover:bg-blue-700'
+            }`}
           >
-            🟢 Enable All
-          </button>
-          <button
-            onClick={resetDefaults}
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
-          >
-            🔄 Reset Defaults
+            {saving ? 'Saving…' : '💾 Save Rules'}
           </button>
         </div>
       </div>
 
-      {/* Import / Export */}
+      {/* Teams selector */}
       <section className="rounded-2xl border p-5">
-        <h2 className="mb-2 text-lg font-semibold">Import / Export</h2>
-        <p className="mb-4 text-sm text-neutral-600">
-          Upload a CSV/XLSX to replace/merge rules by name, or download
-          templates for editing.
-        </p>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50">
-            Upload rules file
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              className="hidden"
-              onChange={(e) =>
-                e.target.files?.[0] && importFile(e.target.files[0])
-              }
-            />
-          </label>
-
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Teams</h2>
           <button
-            onClick={exportTemplate}
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
+            onClick={refreshTeams}
+            className="rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-neutral-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
           >
-            Download Template
-          </button>
-          <button
-            onClick={exportCurrent}
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
-          >
-            Download Current Rules
-          </button>
-
-          <button
-            onClick={handleSave}
-            className="ml-auto rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
-          >
-            💾 Save Rules
+            Refresh
           </button>
         </div>
-      </section>
 
-      {/* Add custom rule */}
-      <section className="rounded-2xl border p-5">
-        <h2 className="mb-3 text-lg font-semibold">➕ Add Custom Rule</h2>
-        <div className="grid gap-3 md:grid-cols-5">
-          <input
-            placeholder="rule_name"
-            value={adding.name}
-            onChange={(e) => setAdding((s) => ({ ...s, name: e.target.value }))}
-            className="rounded-lg border p-2 text-sm md:col-span-2"
-          />
-          <input
-            placeholder="Description (optional)"
-            value={adding.description}
-            onChange={(e) =>
-              setAdding((s) => ({ ...s, description: e.target.value }))
-            }
-            className="rounded-lg border p-2 text-sm md:col-span-2"
-          />
-          <select
-            value={adding.type}
-            onChange={(e) =>
-              setAdding((s) => ({ ...s, type: e.target.value as RuleType }))
-            }
-            className="rounded-lg border p-2 text-sm"
-          >
-            <option value="int">Number (integer)</option>
-            <option value="float">Number (decimal)</option>
-            <option value="bool">True/False</option>
-          </select>
-          {adding.type === 'bool' ? (
-            <select
-              value={adding.value ? 'true' : 'false'}
-              onChange={(e) =>
-                setAdding((s) => ({ ...s, value: e.target.value === 'true' }))
-              }
-              className="rounded-lg border p-2 text-sm"
-            >
-              <option value="true">True</option>
-              <option value="false">False</option>
-            </select>
-          ) : (
-            <input
-              type="number"
-              step={adding.type === 'float' ? '0.1' : '1'}
-              value={Number(adding.value)}
-              onChange={(e) =>
-                setAdding((s) => ({
-                  ...s,
-                  value:
-                    s.type === 'int'
-                      ? Math.round(Number(e.target.value || 0))
-                      : Number(e.target.value || 0),
-                }))
-              }
-              className="rounded-lg border p-2 text-sm"
-            />
+        <div className="mt-3">
+          {teamsError && (
+            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {teamsError}
+            </div>
           )}
-          <div className="md:col-span-5">
-            <button
-              onClick={addCustomRule}
-              className="mt-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
-            >
-              Add Rule
-            </button>
+
+          <div className="relative mt-2 overflow-hidden rounded-xl border">
+            <div className="max-h-[220px] overflow-y-auto">
+              {teams === null ? (
+                <div className="p-4 text-sm text-neutral-400">Loading teams…</div>
+              ) : teams.length === 0 ? (
+                <div className="p-4 text-sm text-neutral-600">
+                  No teams yet. Create one first.
+                </div>
+              ) : (
+                <ul className="divide-y">
+                  {teams.map((t) => {
+                    const active = t.id === selectedTeamId;
+                    return (
+                      <li
+                        key={t.id}
+                        className={`flex items-center justify-between p-3 ${
+                          active ? 'bg-blue-50 dark:bg-blue-950/30' : 'bg-white dark:bg-gray-900'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{t.name}</p>
+                          <p className="truncate text-xs text-neutral-500">ID: {t.id}</p>
+                        </div>
+                        {active ? (
+                          <span className="rounded-md bg-blue-600 px-2 py-1 text-xs text-white">
+                            Active
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handlePickTeam(t)}
+                            className="rounded-md border px-2 py-1 text-xs hover:bg-neutral-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                          >
+                            Use This
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
+
+          {loadingRules && (
+            <p className="mt-2 text-xs text-neutral-500">Loading rules…</p>
+          )}
         </div>
       </section>
 
-      {/* Rule groups */}
-      {groups.map(({ label, category }) => {
-        const items = rules.filter((r) => r.category === category);
-        if (!items.length) return null;
-        return (
-          <section key={category} className="rounded-2xl border p-5">
-            <h2 className="mb-3 text-lg font-semibold">{label}</h2>
-            <div className="space-y-3">
-              {items.map((r) => (
-                <RuleRow key={r.name} r={r} />
-              ))}
-            </div>
-          </section>
-        );
-      })}
+      {/* Rules UI */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Workload */}
+        <section className="rounded-2xl border p-5">
+          <h2 className="mb-2 text-lg font-semibold">📊 Workload Rules</h2>
 
-      {/* Summary */}
+          <div className="space-y-3">
+            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
+              <div>
+                <div className="text-sm font-medium">Min hours per week</div>
+                <div className="text-xs text-neutral-500">Target minimum hours per person.</div>
+              </div>
+              <input
+                type="number"
+                className="rounded-lg border p-2 text-sm"
+                value={rules.minHoursPerWeek}
+                onChange={(e) => setNum('minHoursPerWeek', e.target.value, 0, 80)}
+              />
+            </div>
+
+            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
+              <div>
+                <div className="text-sm font-medium">Max hours per week</div>
+                <div className="text-xs text-neutral-500">Hard cap unless overtime is allowed.</div>
+              </div>
+              <input
+                type="number"
+                className="rounded-lg border p-2 text-sm"
+                value={rules.maxHoursPerWeek}
+                onChange={(e) => setNum('maxHoursPerWeek', e.target.value, 0, 80)}
+              />
+            </div>
+
+            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
+              <div>
+                <div className="text-sm font-medium">Max days per week</div>
+                <div className="text-xs text-neutral-500">Limit how many days someone can work.</div>
+              </div>
+              <input
+                type="number"
+                className="rounded-lg border p-2 text-sm"
+                value={rules.maxDaysPerWeek}
+                onChange={(e) => setNum('maxDaysPerWeek', e.target.value, 1, 7)}
+              />
+            </div>
+
+            <label className="flex items-center justify-between rounded-xl border p-3">
+              <div>
+                <div className="text-sm font-medium">Balance workload</div>
+                <div className="text-xs text-neutral-500">Try to distribute hours fairly.</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={rules.enforceFairness}
+                onChange={(e) => setRules((p) => ({ ...p, enforceFairness: e.target.checked }))}
+              />
+            </label>
+          </div>
+        </section>
+
+        {/* Time */}
+        <section className="rounded-2xl border p-5">
+          <h2 className="mb-2 text-lg font-semibold">⏰ Time Rules</h2>
+
+          <div className="space-y-3">
+            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
+              <div>
+                <div className="text-sm font-medium">Min rest hours</div>
+                <div className="text-xs text-neutral-500">Minimum time between shifts.</div>
+              </div>
+              <input
+                type="number"
+                className="rounded-lg border p-2 text-sm"
+                value={rules.minRestHours}
+                onChange={(e) => setNum('minRestHours', e.target.value, 0, 24)}
+              />
+            </div>
+
+            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
+              <div>
+                <div className="text-sm font-medium">Max shift hours</div>
+                <div className="text-xs text-neutral-500">Shift length limit.</div>
+              </div>
+              <input
+                type="number"
+                className="rounded-lg border p-2 text-sm"
+                value={rules.maxShiftHours}
+                onChange={(e) => setNum('maxShiftHours', e.target.value, 1, 24)}
+              />
+            </div>
+
+            <label className="flex items-center justify-between rounded-xl border p-3">
+              <div>
+                <div className="text-sm font-medium">Prefer availability</div>
+                <div className="text-xs text-neutral-500">Schedule inside availability first.</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={rules.preferAvailability}
+                onChange={(e) =>
+                  setRules((p) => ({ ...p, preferAvailability: e.target.checked }))
+                }
+              />
+            </label>
+
+            <label className="flex items-center justify-between rounded-xl border p-3">
+              <div>
+                <div className="text-sm font-medium">Allow overtime</div>
+                <div className="text-xs text-neutral-500">Permit exceeding max hours/week if needed.</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={rules.allowOvertime}
+                onChange={(e) => setRules((p) => ({ ...p, allowOvertime: e.target.checked }))}
+              />
+            </label>
+          </div>
+        </section>
+      </div>
+
+      {/* Notes */}
       <section className="rounded-2xl border p-5">
-        <h2 className="mb-3 text-lg font-semibold">📊 Summary</h2>
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl border p-3 text-sm">
-            <div>Total Rules</div>
-            <div className="text-lg font-semibold">{summary.total}</div>
-          </div>
-          <div className="rounded-xl border p-3 text-sm">
-            <div>Enabled</div>
-            <div className="text-lg font-semibold text-emerald-600">
-              {summary.enabled}
-            </div>
-          </div>
-          <div className="rounded-xl border p-3 text-sm">
-            <div>Disabled</div>
-            <div className="text-lg font-semibold text-amber-600">
-              {summary.disabled}
-            </div>
-          </div>
-        </div>
+        <h2 className="mb-2 text-lg font-semibold">📝 Notes</h2>
+        <p className="mb-3 text-sm text-neutral-600">
+          Optional notes for managers (not used by the optimizer unless you decide to later).
+        </p>
+        <textarea
+          className="w-full rounded-xl border p-3 text-sm"
+          rows={4}
+          value={rules.notes ?? ''}
+          onChange={(e) => setRules((p) => ({ ...p, notes: e.target.value }))}
+          placeholder="Example: Avoid scheduling new hires for closing on Fridays."
+        />
       </section>
     </div>
   );
