@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import TeamData from '../pages/TeamData';
 import SchedulingRules from '../pages/SchedulingRules';
 import IrregularEvents from '../pages/IrregularEvents';
-import GenerateSchedule from '../pages/GenerateSchedule';
+import GenerateSchedule from '@/app/generate/page';
 import ViewSchedule from '../pages/ViewSchedule';
 import ExportSchedule from '../pages/ExportSchedule';
 import SavedSchedules from '../pages/SavedSchedules';

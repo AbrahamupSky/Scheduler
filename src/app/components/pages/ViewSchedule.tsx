@@ -1,342 +1,661 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
+import React, { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 
-/** ---------- Types ---------- */
-export type ScheduleCell = string | null; // e.g., "08:00" (Start/End cells) or null
-export type ScheduleRow = { Name: string; [col: string]: ScheduleCell }; // columns like 'YYYY-MM-DD Start'/'YYYY-MM-DD End'
+type Team = { id: number; name: string };
 
-export type IrregularEvent = {
-  person: string;
-  type: string;
-  date: string; // 'YYYY-MM-DD'
-  start_time: string; // 'HH:MM'
-  end_time: string; // 'HH:MM'
-  description?: string;
-  ignore_scheduling_rules: boolean;
+type ScheduleMeta = {
+  id: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  optimization: string | null;
+  createdAt: string;
 };
 
-export type ViewScheduleProps = {
-  schedule: ScheduleRow[] | null; // generated or loaded
-  startDate: string; // 'YYYY-MM-DD'
-  endDate: string; // 'YYYY-MM-DD'
-  irregularEvents?: IrregularEvent[] | null; // optional
+type TeamMemberOption = { id: number; name: string };
 
-  /** Optional: override export handlers */
-  onExportCsv?: (csv: string, defaultFileName: string) => void;
-  onExportXlsx?: (wb: XLSX.WorkBook, defaultFileName: string) => void;
+type GeneratedSchedule = {
+  shifts: Array<{
+    shiftId: string;
+    date: string;
+    weekday: 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
+    shiftName: string;
+    jobType: string | null;
+    startHHMM: string;
+    endHHMM: string;
+    required: number;
+    assigned: Array<{ memberId: number; name: string }>;
+    unfilled: number;
+  }>;
+  stats?: any;
+  notes?: string[];
 };
 
-/** ---------- Helpers ---------- */
-function dayKeysFromRange(startISO: string, endISO: string) {
-  const out: { label: string; key: string }[] = [];
-  const start = new Date(`${startISO}T00:00:00`);
-  const end = new Date(`${endISO}T00:00:00`);
-  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return out;
-
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const label = d.toLocaleDateString(undefined, {
-      weekday: 'long',
-      month: '2-digit',
-      day: '2-digit',
-    });
-    const key = d.toISOString().slice(0, 10);
-    out.push({ label, key });
-  }
-  return out;
+function fmtDate(d: string) {
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return d;
+  return dt.toLocaleString();
 }
 
-function detectConflicts(rows: ScheduleRow[], dayKeys: string[]) {
-  const issues: string[] = [];
-  for (const r of rows) {
-    for (const k of dayKeys) {
-      const s = r[`${k} Start`];
-      const e = r[`${k} End`];
-      const onlyOne = (!!s && !e) || (!!e && !s);
-      if (onlyOne) issues.push(`${r.Name}: incomplete assignment on ${k}`);
-      // hook: add true overlap checks if you later store multiple intervals per day
-    }
-  }
-  return issues;
+function recomputeUnfilled(d: GeneratedSchedule): GeneratedSchedule {
+  return {
+    ...d,
+    shifts: d.shifts.map((s) => ({
+      ...s,
+      unfilled: Math.max(0, (s.required ?? 0) - (s.assigned?.length ?? 0)),
+    })),
+  };
 }
 
-function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+function addAssigned(
+  d: GeneratedSchedule,
+  shiftId: string,
+  member: { id: number; name: string }
+) {
+  const next = {
+    ...d,
+    shifts: d.shifts.map((s) => {
+      if (s.shiftId !== shiftId) return s;
 
-/** ---------- Component ---------- */
-export default function ViewSchedule({
-  schedule,
-  startDate,
-  endDate,
-  irregularEvents,
-  onExportCsv,
-  onExportXlsx,
-}: ViewScheduleProps) {
-  const days = useMemo(
-    () => dayKeysFromRange(startDate, endDate),
-    [startDate, endDate]
-  );
-  const dayKeys = days.map((d) => d.key);
+      const already = s.assigned.some((a) => a.memberId === member.id);
+      const full = s.assigned.length >= s.required;
 
-  const issues = useMemo(
-    () => (schedule ? detectConflicts(schedule, dayKeys) : []),
-    [schedule, dayKeys]
-  );
+      if (already || full) return s;
 
-  const summary = useMemo(() => {
-    if (!schedule)
       return {
-        totalShifts: 0,
-        activeEmployees: 0,
-        daysCovered: dayKeys.length,
+        ...s,
+        assigned: [...s.assigned, { memberId: member.id, name: member.name }],
       };
-    const startCols = dayKeys.map((k) => `${k} Start`);
-    let total = 0;
-    for (const r of schedule) {
-      for (const c of startCols) total += r[c] ? 1 : 0;
-    }
-    const active = schedule.filter((r) => startCols.some((c) => !!r[c])).length;
-    return {
-      totalShifts: total,
-      activeEmployees: active,
-      daysCovered: dayKeys.length,
-    };
-  }, [schedule, dayKeys]);
+    }),
+  };
+  return recomputeUnfilled(next);
+}
 
-  const eventsInWindow = useMemo(() => {
-    if (!irregularEvents || !irregularEvents.length) return [];
-    return irregularEvents.filter(
-      (ev) => ev.date >= startDate && ev.date <= endDate
-    );
-  }, [irregularEvents, startDate, endDate]);
+function removeAssigned(d: GeneratedSchedule, shiftId: string, memberId: number) {
+  const next = {
+    ...d,
+    shifts: d.shifts.map((s) => {
+      if (s.shiftId !== shiftId) return s;
+      return {
+        ...s,
+        assigned: s.assigned.filter((a) => a.memberId !== memberId),
+      };
+    }),
+  };
+  return recomputeUnfilled(next);
+}
 
-  /** ---------- Export ---------- */
-  const exportCsv = () => {
-    if (!schedule) return;
-    // Flatten to one column per Start/End + Name
-    const cols = [
-      'Name',
-      ...dayKeys.flatMap((k) => [`${k} Start`, `${k} End`]),
-    ];
-    const rows = schedule.map((r) => {
-      const out: Record<string, any> = { Name: r.Name };
-      for (const k of dayKeys) {
-        out[`${k} Start`] = r[`${k} Start`] ?? '';
-        out[`${k} End`] = r[`${k} End`] ?? '';
+export default function SchedulesPage() {
+  const [teams, setTeams] = useState<Team[] | null>(null);
+  const [teamId, setTeamId] = useState<number | null>(null);
+
+  const [list, setList] = useState<ScheduleMeta[] | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  const [schedule, setSchedule] = useState<{
+    id: number;
+    name: string;
+    createdAt: string;
+    optimization: string | null;
+    team: { id: number; name: string };
+    data: GeneratedSchedule;
+  } | null>(null);
+
+  // --- Edit Mode ---
+  const [editMode, setEditMode] = useState(false);
+  const [draft, setDraft] = useState<GeneratedSchedule | null>(null);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const token =
+    typeof window !== 'undefined' ? localStorage.getItem('authToken') ?? '' : '';
+
+  // Load teams
+  useEffect(() => {
+    (async () => {
+      try {
+        setError(null);
+        const res = await fetch('/api/teams', {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        const data = await res.json().catch(() => []);
+        if (!res.ok) throw new Error(data?.error ?? 'Failed to load teams');
+        setTeams(data);
+        if (data?.length) setTeamId((prev) => prev ?? data[0].id);
+      } catch (e: any) {
+        setTeams([]);
+        setError(e?.message ?? 'Failed to load teams');
       }
-      return out;
-    });
-    const csv = Papa.unparse({
-      fields: cols,
-      data: rows.map((r) => cols.map((c) => r[c] ?? '')),
-    });
-    const defaultName = `schedule_${startDate}_to_${endDate}.csv`;
-    if (onExportCsv) onExportCsv(csv, defaultName);
-    else
-      downloadBlob(
-        defaultName,
-        new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-      );
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load schedules list when team changes
+  useEffect(() => {
+    if (!teamId) {
+      setList(null);
+      setSelectedId(null);
+      setSchedule(null);
+      setEditMode(false);
+      setDraft(null);
+      return;
+    }
+    (async () => {
+      try {
+        setBusy(true);
+        setError(null);
+        setSchedule(null);
+        setSelectedId(null);
+        setEditMode(false);
+        setDraft(null);
+
+        const res = await fetch(`/api/teams/${teamId}/schedules`, {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload?.error ?? 'Failed to load schedules');
+
+        setList(payload.schedules ?? []);
+      } catch (e: any) {
+        setList([]);
+        setError(e?.message ?? 'Failed to load schedules');
+      } finally {
+        setBusy(false);
+      }
+    })();
+  }, [teamId, token]);
+
+  const loadSchedule = async (scheduleId: number) => {
+    try {
+      setBusy(true);
+      setError(null);
+      setSelectedId(scheduleId);
+
+      setEditMode(false);
+      setDraft(null);
+
+      const res = await fetch(`/api/schedules/${scheduleId}`, {
+        cache: 'no-store',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error ?? 'Failed to load schedule');
+
+      setSchedule(payload.schedule);
+      setDraft(payload.schedule?.data ?? null);
+    } catch (e: any) {
+      setSchedule(null);
+      setDraft(null);
+      setError(e?.message ?? 'Failed to load schedule');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const exportXlsx = () => {
+  // --- Edit mode: load team members (must include member IDs from /api/teams/[id]/data) ---
+  const enterEditMode = async () => {
     if (!schedule) return;
-    const header = [
-      'Name',
-      ...dayKeys.flatMap((k) => [`${k} Start`, `${k} End`]),
-    ];
-    const matrix = (schedule ?? []).map((r) => {
-      const row: any[] = [r.Name];
-      for (const k of dayKeys) {
-        row.push(r[`${k} Start`] ?? '');
-        row.push(r[`${k} End`] ?? '');
-      }
-      return row;
-    });
-    const ws = XLSX.utils.aoa_to_sheet([header, ...matrix]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Schedule');
 
-    const defaultName = `schedule_${startDate}_to_${endDate}.xlsx`;
-    if (onExportXlsx) onExportXlsx(wb, defaultName);
-    else {
-      const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-      downloadBlob(
-        defaultName,
-        new Blob([wbout], { type: 'application/octet-stream' })
-      );
+    setError(null);
+    setEditMode(true);
+    setDraft(schedule.data);
+
+    try {
+      const res = await fetch(`/api/teams/${schedule.team.id}/data`, {
+        cache: 'no-store',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error ?? 'Failed to load team members');
+      }
+
+      const members: TeamMemberOption[] = Array.isArray(payload?.members)
+        ? payload.members
+            .map((m: any) => ({
+              id: Number(m.id),
+              name: String(m.name ?? '').trim(),
+            }))
+            .filter((m: TeamMemberOption) => Number.isFinite(m.id) && m.name)
+        : [];
+
+      setTeamMembers(members);
+    } catch (e: any) {
+      setTeamMembers([]);
+      setError(e?.message ?? 'Failed to load team members');
     }
   };
+
+  const cancelEdits = () => {
+    setEditMode(false);
+    setDraft(schedule?.data ?? null);
+  };
+
+  const saveEdits = async () => {
+    if (!schedule || !draft) return;
+
+    try {
+      setSaving(true);
+      setError(null);
+
+      const res = await fetch(`/api/schedules/${schedule.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ data: draft }),
+      });
+
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error ?? 'Failed to save schedule');
+
+      // update local schedule view
+      setSchedule((prev) => (prev ? { ...prev, data: draft } : prev));
+      setEditMode(false);
+    } catch (e: any) {
+      setError(e?.message ?? 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const activeData = editMode ? draft : schedule?.data;
+  const rows = activeData?.shifts ?? [];
+  const totalUnfilled = activeData?.stats?.totalUnfilledSlots ?? 0;
+
+  const statsPairs = useMemo(() => {
+    const h = activeData?.stats?.hoursByMember ?? {};
+    const s = activeData?.stats?.shiftsByMember ?? {};
+    const names = Array.from(new Set([...Object.keys(h), ...Object.keys(s)]));
+    return names
+      .map((name) => ({
+        name,
+        hours: Number(h[name] ?? 0),
+        shifts: Number(s[name] ?? 0),
+      }))
+      .sort((a, b) => b.hours - a.hours);
+  }, [activeData]);
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (!editMode) return false;
+    if (!schedule || !draft) return false;
+    try {
+      return JSON.stringify(schedule.data) !== JSON.stringify(draft);
+    } catch {
+      return true;
+    }
+  }, [editMode, schedule, draft]);
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <main className="mx-auto max-w-7xl p-6 space-y-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">📋 View Schedule</h1>
+          <h1 className="text-2xl font-semibold">📅 View Schedules</h1>
           <p className="text-sm text-neutral-600">
-            {new Date(`${startDate}T00:00:00`).toLocaleDateString()} –{' '}
-            {new Date(`${endDate}T00:00:00`).toLocaleDateString()}
+            Select a team, then view saved schedules.
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={exportCsv}
-            disabled={!schedule}
-            className={`rounded-lg px-3 py-2 text-sm ${
-              schedule
-                ? 'border hover:bg-neutral-50'
-                : 'border text-neutral-400'
-            }`}
+          <Link
+            href="/generate"
+            className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
           >
-            Export CSV
-          </button>
-          <button
-            onClick={exportXlsx}
-            disabled={!schedule}
-            className={`rounded-lg px-3 py-2 text-sm ${
-              schedule
-                ? 'border hover:bg-neutral-50'
-                : 'border text-neutral-400'
-            }`}
+            + Generate Schedule
+          </Link>
+          <Link
+            href="/teams/new"
+            className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
           >
-            Export Excel
-          </button>
+            + Create Team
+          </Link>
         </div>
-      </div>
+      </header>
 
-      {/* Irregular events summary */}
-      <section className="rounded-2xl border p-5">
-        <h2 className="mb-2 text-lg font-semibold">
-          🎯 Irregular Events in Range
-        </h2>
-        {!eventsInWindow.length ? (
-          <p className="text-sm text-neutral-600">
-            No irregular events for this range.
-          </p>
-        ) : (
-          <ul className="text-sm text-neutral-700">
-            {eventsInWindow.map((ev, idx) => (
-              <li key={idx} className="border-t py-2 first:border-0">
-                <span className="font-medium">{ev.person}</span> — {ev.type} (
-                {ev.start_time}-{ev.end_time}) on{' '}
-                {new Date(`${ev.date}T00:00:00`).toLocaleDateString(undefined, {
-                  weekday: 'long',
-                  month: '2-digit',
-                  day: '2-digit',
-                })}{' '}
-                •{' '}
-                {ev.ignore_scheduling_rules
-                  ? '🔓 Ignores rules'
-                  : '⚠️ Follows rules'}
-                {ev.description ? (
-                  <>
-                    {' '}
-                    — <span className="text-neutral-600">{ev.description}</span>
-                  </>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* Team selector */}
+      <section className="rounded-2xl border p-5 space-y-3">
+        <div className="grid gap-3 md:grid-cols-3 items-end">
+          <div className="md:col-span-2">
+            <label className="text-sm text-neutral-600">Team</label>
+            <select
+              className="mt-1 w-full rounded-lg border p-2"
+              value={teamId ?? ''}
+              onChange={(e) => setTeamId(Number(e.target.value))}
+              disabled={editMode} // prevent switching while editing
+              title={editMode ? 'Finish editing before switching teams' : undefined}
+            >
+              {teams === null && <option value="">Loading…</option>}
+              {teams?.length === 0 && <option value="">No teams</option>}
+              {teams?.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} (#{t.id})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="text-xs text-neutral-500">
+            {busy ? 'Loading…' : list ? `${list.length} schedules` : '—'}
+          </div>
+        </div>
       </section>
 
-      {/* Grid */}
-      <section className="rounded-2xl border p-5">
-        <h2 className="mb-3 text-lg font-semibold">Weekly Schedule Grid</h2>
-        {!schedule || schedule.length === 0 ? (
-          <p className="text-sm text-neutral-600">
-            No schedule loaded. Generate or load one first.
+      <div className="grid gap-6 lg:grid-cols-[360px,1fr]">
+        {/* Left: schedules list */}
+        <section className="rounded-2xl border p-4">
+          <h2 className="text-lg font-semibold">Saved Schedules</h2>
+          <p className="text-sm text-neutral-600 mb-3">
+            Click one to view details.
           </p>
-        ) : (
-          <div className="overflow-auto rounded-lg border">
-            <table className="min-w-[900px] text-left text-sm">
-              <thead className="bg-neutral-50">
-                <tr>
-                  <th className="px-3 py-2">Name</th>
-                  {days.map((d) => (
-                    <th key={d.key} className="px-3 py-2">
-                      {d.label}
-                      <span className="block text-xs text-neutral-500">
-                        Start / End
-                      </span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {schedule.map((row) => (
-                  <tr key={row.Name} className="border-t align-top">
-                    <td className="px-3 py-2 font-medium">{row.Name}</td>
-                    {dayKeys.map((k) => {
-                      const s = row[`${k} Start`];
-                      const e = row[`${k} End`];
-                      return (
-                        <td key={k} className="px-3 py-2">
-                          {s || e ? (
-                            <>
-                              <div>{s}</div>
-                              <div>{e}</div>
-                            </>
-                          ) : (
-                            <span className="text-neutral-400">—</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="mt-2 text-xs text-neutral-500">
-          Each day has “Start” and “End” cells. Empty means no shift assigned.
-        </p>
-      </section>
 
-      {/* Stats */}
-      <section className="rounded-2xl border p-5">
-        <h2 className="mb-3 text-lg font-semibold">📊 Schedule Statistics</h2>
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl border p-3 text-sm">
-            <div>Total Shifts Assigned</div>
-            <div className="text-lg font-semibold">{summary.totalShifts}</div>
+          <div className="max-h-[520px] overflow-auto rounded-xl border">
+            {list === null ? (
+              <div className="p-4 text-sm text-neutral-500">Loading…</div>
+            ) : list.length === 0 ? (
+              <div className="p-4 text-sm text-neutral-500">
+                No schedules saved yet.
+                <div className="mt-2">
+                  <Link className="text-blue-600 underline" href="/generate">
+                    Generate your first schedule
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <ul className="divide-y">
+                {list.map((s) => {
+                  const active = s.id === selectedId;
+                  return (
+                    <li
+                      key={s.id}
+                      className={`p-3 ${active ? 'bg-blue-50' : 'bg-white'}`}
+                    >
+                      <button
+                        className="w-full text-left"
+                        onClick={() => {
+                          if (editMode) return;
+                          loadSchedule(s.id);
+                        }}
+                        disabled={editMode}
+                        title={editMode ? 'Finish editing before switching schedules' : undefined}
+                      >
+                        <div className="text-sm font-medium truncate">
+                          {s.name}
+                        </div>
+                        <div className="text-xs text-neutral-500 truncate">
+                          {String(s.startDate).slice(0, 10)} →{' '}
+                          {String(s.endDate).slice(0, 10)} •{' '}
+                          {s.optimization ?? '—'}
+                        </div>
+                        <div className="text-[11px] text-neutral-400">
+                          Created: {fmtDate(s.createdAt)}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
-          <div className="rounded-xl border p-3 text-sm">
-            <div>Active Employees</div>
-            <div className="text-lg font-semibold">
-              {summary.activeEmployees}
+        </section>
+
+        {/* Right: schedule detail */}
+        <section className="rounded-2xl border p-5 space-y-4">
+          {!schedule ? (
+            <div className="rounded-lg border border-dashed p-8 text-sm text-neutral-500">
+              Select a schedule on the left to view it here.
             </div>
-          </div>
-          <div className="rounded-xl border p-3 text-sm">
-            <div>Days Covered</div>
-            <div className="text-lg font-semibold">{summary.daysCovered}</div>
-          </div>
-        </div>
-      </section>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">{schedule.name}</h2>
+                  <p className="text-sm text-neutral-600">
+                    Team: <b>{schedule.team.name}</b> • Created:{' '}
+                    {fmtDate(schedule.createdAt)} • Unfilled:{' '}
+                    <b>{totalUnfilled}</b>
+                    {editMode && (
+                      <span className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs text-neutral-600">
+                        Edit mode {hasUnsavedChanges ? '• unsaved' : ''}
+                      </span>
+                    )}
+                  </p>
+                </div>
 
-      {/* Conflicts */}
-      <section className="rounded-2xl border p-5">
-        <h2 className="mb-3 text-lg font-semibold">🔍 Conflict Detection</h2>
-        {issues.length ? (
-          <ul className="list-disc pl-5 text-sm text-amber-800">
-            {issues.map((m, i) => (
-              <li key={i}>{m}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-emerald-700">✅ No conflicts detected.</p>
-        )}
-      </section>
-    </div>
+                {/* Buttons */}
+                <div className="flex gap-2">
+                  {!editMode ? (
+                    <button
+                      className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
+                      onClick={enterEditMode}
+                      disabled={busy}
+                    >
+                      ✏️ Edit
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
+                        onClick={cancelEdits}
+                        disabled={saving}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+                        onClick={saveEdits}
+                        disabled={saving || !draft || !hasUnsavedChanges}
+                        title={!hasUnsavedChanges ? 'No changes to save' : undefined}
+                      >
+                        {saving ? 'Saving…' : '💾 Save Changes'}
+                      </button>
+                    </>
+                  )}
+
+                  <button
+                    className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
+                    onClick={() => alert('Next: export CSV')}
+                    disabled={editMode}
+                    title={editMode ? 'Finish editing before exporting' : undefined}
+                  >
+                    ⬇️ Export
+                  </button>
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="rounded-lg border overflow-hidden">
+                <div className="max-h-[520px] overflow-auto">
+                  <table className="min-w-[980px] w-full text-left text-sm">
+                    <thead className="sticky top-0 bg-gray-50 z-10">
+                      <tr className="text-xs uppercase text-gray-600">
+                        <th className="px-3 py-2">Date</th>
+                        <th className="px-3 py-2">Shift</th>
+                        <th className="px-3 py-2">Job</th>
+                        <th className="px-3 py-2">Time</th>
+                        <th className="px-3 py-2">Required</th>
+                        <th className="px-3 py-2">Assigned</th>
+                        <th className="px-3 py-2">Unfilled</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.shiftId} className="border-t align-top">
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {r.date} ({r.weekday})
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {r.shiftName}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {r.jobType ?? '—'}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {r.startHHMM}–{r.endHHMM}
+                          </td>
+                          <td className="px-3 py-2">{r.required}</td>
+
+                          {/* Assigned */}
+                          <td className="px-3 py-2">
+                            {!editMode ? (
+                              r.assigned.length
+                                ? r.assigned.map((a) => a.name).join(', ')
+                                : '—'
+                            ) : (
+                              <div className="space-y-2">
+                                <div className="flex flex-wrap gap-1">
+                                  {r.assigned.length ? (
+                                    r.assigned.map((a) => (
+                                      <span
+                                        key={a.memberId}
+                                        className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs"
+                                      >
+                                        {a.name}
+                                        <button
+                                          className="text-red-600"
+                                          onClick={() =>
+                                            setDraft((d) =>
+                                              d
+                                                ? removeAssigned(
+                                                    d,
+                                                    r.shiftId,
+                                                    a.memberId
+                                                  )
+                                                : d
+                                            )
+                                          }
+                                          title="Remove"
+                                        >
+                                          ✕
+                                        </button>
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-xs text-neutral-500">
+                                      —
+                                    </span>
+                                  )}
+                                </div>
+
+                                <select
+                                  className="w-full rounded-lg border p-2 text-sm"
+                                  defaultValue=""
+                                  onChange={(e) => {
+                                    const id = Number(e.target.value);
+                                    const m = teamMembers.find((x) => x.id === id);
+                                    if (!m) return;
+
+                                    setDraft((d) =>
+                                      d ? addAssigned(d, r.shiftId, m) : d
+                                    );
+                                    e.currentTarget.value = '';
+                                  }}
+                                  disabled={teamMembers.length === 0}
+                                  title={
+                                    teamMembers.length === 0
+                                      ? 'No team members loaded (check /api/teams/[id]/data returns member id)'
+                                      : undefined
+                                  }
+                                >
+                                  <option value="">+ Add team member…</option>
+                                  {teamMembers.map((m) => (
+                                    <option key={m.id} value={m.id}>
+                                      {m.name}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <div className="text-xs text-neutral-500">
+                                  {r.assigned.length}/{r.required} filled
+                                </div>
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="px-3 py-2">
+                            {r.unfilled > 0 ? (
+                              <span className="text-red-600 font-medium">
+                                {r.unfilled}
+                              </span>
+                            ) : (
+                              '0'
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {rows.length === 0 && (
+                        <tr>
+                          <td
+                            className="px-3 py-6 text-sm text-neutral-500"
+                            colSpan={7}
+                          >
+                            No shifts found in this schedule.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Stats */}
+              <details className="rounded-lg border p-3" open={!editMode}>
+                <summary className="cursor-pointer text-sm font-medium">
+                  Stats
+                </summary>
+
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border p-3">
+                    <div className="text-sm font-medium">Hours by member</div>
+                    <div className="mt-2 space-y-1 text-sm">
+                      {statsPairs.slice(0, 12).map((p) => (
+                        <div
+                          key={p.name}
+                          className="flex items-center justify-between"
+                        >
+                          <span className="truncate">{p.name}</span>
+                          <span className="tabular-nums text-neutral-600">
+                            {p.hours.toFixed(2)}h • {p.shifts} shifts
+                          </span>
+                        </div>
+                      ))}
+                      {statsPairs.length === 0 && (
+                        <div className="text-neutral-500">No stats found.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border p-3">
+                    <div className="text-sm font-medium">Notes</div>
+                    <ul className="mt-2 list-disc pl-5 text-sm text-neutral-700">
+                      {(activeData?.notes ?? []).slice(0, 10).map((n, i) => (
+                        <li key={i}>{n}</li>
+                      ))}
+                    </ul>
+                    {(activeData?.notes?.length ?? 0) > 10 && (
+                      <div className="mt-2 text-xs text-neutral-500">
+                        Showing first 10 notes…
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </details>
+            </>
+          )}
+        </section>
+      </div>
+    </main>
   );
 }

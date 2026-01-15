@@ -99,14 +99,18 @@ function buildShiftRowsFromDb(
 }
 
 /* ----------------------------------- GET ---------------------------------- */
-export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     const user = await getUserFromAuth(req);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const teamId = Number(ctx.params.id);
+    const { id } = await ctx.params;
+    const teamId = Number(id);
     if (!Number.isFinite(teamId)) {
       return NextResponse.json({ error: 'Invalid team id' }, { status: 400 });
     }
@@ -119,6 +123,7 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
         name: true,
         members: {
           select: {
+            id: true,
             name: true,
             job: true,
             position: true,
@@ -150,6 +155,7 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
     /* -------- normalize DB -> payload your UI expects (two shapes) -------- */
     // 1) canonical shape (members/windows/templates)
     const members = team.members.map((m) => ({
+      id: m.id,
       name: m.name,
       job: m.job,
       position: m.position,
