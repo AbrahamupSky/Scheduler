@@ -2,18 +2,22 @@ services:
   web:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: schedule_web
+      dockerfile: Dockerfile.dev
+    container_name: schedule_web_dev
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: production
-      # Prisma reads this
+      NODE_ENV: development
       DATABASE_URL: "file:/app/prisma/dev.db"
     volumes:
-      # Persist the sqlite DB file
+      # Hot reload (code)
+      - .:/app
+      # Keep node_modules inside container
+      - node_modules:/app/node_modules
+      # Persist sqlite
       - sqlite_data:/app/prisma
     restart: unless-stopped
 
 volumes:
+  node_modules:
   sqlite_data:

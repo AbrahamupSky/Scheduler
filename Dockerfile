@@ -1,30 +1,20 @@
-# ---- deps ----
-FROM node:20-alpine AS deps
+FROM node:20-alpine
+
+# Set working directory
 WORKDIR /app
+
+# Install deps first (better caching)
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
-# ---- build ----
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+# Copy the rest of the app
 COPY . .
-# generate prisma client + build next
+
+# Prisma client (dev)
 RUN npx prisma generate
-RUN npm run build
 
-# ---- run ----
-FROM node:20-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-
-# Copy build output
-COPY --from=builder /app ./
-
-# Ensure prisma folder exists for sqlite file
-RUN mkdir -p /app/prisma
-
+# Expose Next.js dev port
 EXPOSE 3000
 
-# Run migrations on startup (safe for sqlite) then start
-CMD sh -c "npx prisma migrate deploy && npm run start"
+# Run Next.js in dev mode
+CMD ["npm", "run", "dev"]
