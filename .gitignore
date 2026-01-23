@@ -44,3 +44,5 @@ bun.lock
 .flowbite-react
 .vscode
 /src/generated/prisma
+/prisma/prisma/dev.db
+/prisma/migrations
