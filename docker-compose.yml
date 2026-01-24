@@ -8,7 +8,7 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: development
-      DATABASE_URL: "file://./prisma/dev.db"
+      DATABASE_URL: "file:/prisma/prisma/dev.db"
     volumes:
       - scheduler_db:/app/prisma/dev.db
       - scheduler_node_modules:/app/node_modules

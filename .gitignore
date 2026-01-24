@@ -41,8 +41,7 @@ yarn-error.log*
 next-env.d.ts
 
 bun.lock
-.flowbite-react
 .vscode
-/src/generated/prisma
+
+# prisma
 /prisma/prisma/dev.db
-/prisma/migrations
