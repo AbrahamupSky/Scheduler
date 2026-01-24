@@ -15,8 +15,4 @@ services:
 
 volumes:
   scheduler_db:
-<<<<<<< HEAD
   scheduler_node_modules:
-=======
-  scheduler_node_modules:
->>>>>>> 26f0008f4e380bcb87d9e0f43edf90900082b6a6
