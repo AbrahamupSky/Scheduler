@@ -1,20 +1,31 @@
+# Dockerfile
 FROM node:20-alpine
 
-# Set working directory
 WORKDIR /app
 
-# Install deps first (better caching)
-COPY package*.json ./
-RUN npm install
+# Needed for some node modules + prisma on alpine
+RUN apk add --no-cache libc6-compat openssl
 
-# Copy the rest of the app
+# Install deps first for better caching
+COPY package.json pnpm-lock.yaml* package-lock.json* yarn.lock* ./
+
+# Choose ONE package manager. This assumes pnpm.
+RUN corepack enable && pnpm install
+
+# Copy the rest
 COPY . .
 
-# Prisma client (dev)
-RUN npx prisma generate
+# Create a dedicated writable folder for sqlite + prisma
+# (We'll also mount a Docker volume to /data to persist)
+RUN mkdir -p /data/sqlite && chmod -R 777 /data
 
-# Expose Next.js dev port
+# Set Prisma SQLite path (absolute + volume-backed)
+ENV DATABASE_URL="file:/data/sqlite/dev.db"
+
+# Generate prisma client at build time (safe)
+RUN pnpm prisma generate
+
 EXPOSE 3000
 
-# Run Next.js in dev mode
-CMD ["npm", "run", "dev"]
+# On container start: ensure folder exists, run migrations, then start dev server
+CMD sh -c "mkdir -p /data/sqlite && pnpm prisma migrate dev && pnpm dev"

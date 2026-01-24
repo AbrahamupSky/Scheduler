@@ -1,18 +1,22 @@
 services:
-  web:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: schedule_web_dev
+  scheduler:
+    build: .
+    container_name: scheduler
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: development
-      DATABASE_URL: "file:/prisma/prisma/dev.db"
+      - NODE_ENV=development
+      - DATABASE_URL=file:/data/sqlite/dev.db
+      # optional: if you want to bypass auth while debugging
+      # - AUTH_DISABLED=true
     volumes:
-      - scheduler_db:/app/prisma/dev.db
-      - scheduler_node_modules:/app/node_modules
+      # Mount source for live dev (hot reload)
+      - .:/app
+      # Keep node_modules inside container (prevents host/arch mismatch)
+      - /app/node_modules
+      # Persist sqlite in a named volume (fixes Linux perms + keeps data)
+      - scheduler_sqlite:/data/sqlite
+    command: sh -c "mkdir -p /data/sqlite && pnpm prisma generate && pnpm prisma migrate dev && pnpm dev"
 
 volumes:
-  scheduler_db:
-  scheduler_node_modules:
+  scheduler_sqlite:
