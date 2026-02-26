@@ -1,9 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/app/lib/prisma';
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/app/lib/prisma";
+import { loadShiftTemplates } from "@/lib/scheduler/loadShiftTemplates";
+import { loadAvailability } from "@/lib/scheduler/loadAvailability";
 
 /* -------------------------- auth helper (Bearer) -------------------------- */
 async function getUserFromAuth(req: NextRequest) {
-  const auth = req.headers.get('authorization') || '';
+  const auth = req.headers.get("authorization") || "";
   const m = auth.match(/^Bearer\s+(.+)$/i);
   const token = m?.[1];
   if (!token) return null;
@@ -23,13 +25,15 @@ export async function GET(
 ) {
   try {
     const user = await getUserFromAuth(req);
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const { id } = await ctx.params;
 
     const scheduleId = Number(id);
     if (!Number.isFinite(scheduleId)) {
-      return NextResponse.json({ error: 'Invalid schedule id' }, { status: 400 });
+      return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
     }
 
     // Load schedule AND make sure it belongs to this user (through team.ownerId)
@@ -51,8 +55,12 @@ export async function GET(
     });
 
     if (!schedule) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
+
+    // NEW: Load CSV-driven templates + availability
+    const shiftTemplates = loadShiftTemplates();
+    const availability = loadAvailability();
 
     return NextResponse.json({
       schedule: {
@@ -60,9 +68,11 @@ export async function GET(
         // ensure JSON comes back as your GeneratedSchedule
         data: schedule.data,
       },
+      shiftTemplates,
+      availability,
     });
   } catch (err) {
-    console.error('GET /api/schedules/[id] error:', err);
-    return NextResponse.json({ error: 'Server error' }, { status: 500 });
+    console.error("GET /api/schedules/[id] error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

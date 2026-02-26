@@ -2,8 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import Swal from "sweetalert2";
 
-/** Helpers to normalize API shape B -> table rows */
+/** Helpers to normalize API shape -> table rows */
 const WEEKDAYS = [
   'Monday',
   'Tuesday',
@@ -13,33 +14,33 @@ const WEEKDAYS = [
   'Saturday',
   'Sunday',
 ] as const;
-const ENUM_TO_DAY: Record<
-  'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT',
-  string
-> = {
-  SUN: 'Sunday',
-  MON: 'Monday',
-  TUE: 'Tuesday',
-  WED: 'Wednesday',
-  THU: 'Thursday',
-  FRI: 'Friday',
-  SAT: 'Saturday',
-};
 
-function buildAvailabilityRowsFromDb(
+const INT_TO_DAY = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+] as const;
+
+function buildAvailabilityRowsFromApi(
   members: Array<{
+    id: number;
     name: string;
     job?: string | null;
     position?: string | null;
   }>,
   windows: Array<{
-    memberName: string;
-    weekday: 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
-    startHHMM: string | null;
-    endHHMM: string | null;
-  }>
+    memberId: number;
+    dayOfWeek: number; // 0-6 (Sun-Sat)
+    startTime: string; // "HH:MM"
+    endTime: string; // "HH:MM"
+  }>,
 ) {
-  const byName = new Map<string, any>();
+  const byId = new Map<number, any>();
+
   members.forEach((m) => {
     const row: any = {
       Name: m.name,
@@ -47,41 +48,42 @@ function buildAvailabilityRowsFromDb(
       Position: m.position ?? '',
     };
     WEEKDAYS.forEach((d) => (row[d] = ''));
-    byName.set(m.name, row);
+    byId.set(m.id, row);
   });
+
   windows.forEach((w) => {
-    const row = byName.get(w.memberName);
+    const row = byId.get(w.memberId);
     if (!row) return;
-    const day = ENUM_TO_DAY[w.weekday] || 'Monday';
-    if (w.startHHMM == null && w.endHHMM == null) return;
-    const seg = `${w.startHHMM ?? '00:00'}-${w.endHHMM ?? '00:00'}`;
+    const day = INT_TO_DAY[w.dayOfWeek] ?? 'Monday';
+    const seg = `${w.startTime}-${w.endTime}`;
     row[day] = row[day] ? `${row[day]}, ${seg}` : seg;
   });
-  return Array.from(byName.values());
+
+  return Array.from(byId.values());
 }
 
-function buildShiftRowsFromDb(
+function buildShiftRowsFromApi(
   templates: Array<{
-    shiftName: string;
+    shift: string;
     jobType?: string | null;
-    weekday: 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
-    startHHMM: string;
-    endHHMM: string;
+    day: string; // "Monday"
+    startTime: string; // "HH:MM"
+    endTime: string; // "HH:MM"
     required?: number;
-  }>
+  }>,
 ) {
   return templates.map((t) => ({
-    Shift: t.shiftName,
+    Shift: t.shift,
     Job_Type: t.jobType ?? '',
-    Day: ENUM_TO_DAY[t.weekday],
-    Start_Time: t.startHHMM,
-    End_Time: t.endHHMM,
+    Day: t.day,
+    Start_Time: t.startTime,
+    End_Time: t.endTime,
     Required: t.required ?? 1,
   }));
 }
 
 /** Component (display-only) */
-export default function UploadDataDisplayOnly({
+export default function TeamData({
   teamId,
   teamName,
 }: {
@@ -90,15 +92,19 @@ export default function UploadDataDisplayOnly({
 }) {
   // teams list + selection
   const [teams, setTeams] = useState<{ id: number; name: string }[] | null>(
-    null
+    null,
   );
   const [teamsError, setTeamsError] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(teamId);
   const [selectedTeamName, setSelectedTeamName] = useState<string | null>(
-    teamName
+    teamName,
   );
 
-  // loaded (DB) tables
+  // delete state
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // loaded tables
   const [availabilityRows, setAvailabilityRows] = useState<any[] | null>(null);
   const [shiftsRows, setShiftsRows] = useState<any[] | null>(null);
 
@@ -112,6 +118,7 @@ export default function UploadDataDisplayOnly({
   useEffect(() => {
     const token =
       typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
+
     (async () => {
       try {
         setTeamsError(null);
@@ -120,6 +127,7 @@ export default function UploadDataDisplayOnly({
           cache: 'no-store',
         });
         if (!res.ok) throw new Error('Failed to load teams');
+
         const data = (await res.json()) as { id: number; name: string }[];
         setTeams(data);
 
@@ -136,50 +144,55 @@ export default function UploadDataDisplayOnly({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Whenever team changes, (re)load data from DB
+  // Whenever team changes, load availability + shifts from their real endpoints
   useEffect(() => {
     if (!effectiveTeamId) {
       setAvailabilityRows(null);
       setShiftsRows(null);
       return;
     }
+
     (async () => {
       const token = localStorage.getItem('authToken') ?? '';
-      const res = await fetch(`/api/teams/${effectiveTeamId}/data`, {
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+      // ---- Availability ----
+      const aRes = await fetch(`/api/teams/${effectiveTeamId}/availability`, {
         cache: 'no-store',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers,
       });
 
-      if (!res.ok) {
-        // optional: surface detail for debugging
-        const err = await res.json().catch(() => ({}));
-        console.warn('load team data failed', res.status, err);
-        setAvailabilityRows(null);
-        setShiftsRows(null);
-        return;
-      }
-      const payload = await res.json();
-
-      // If your API returns the table-ready arrays, prefer those:
-      if (Array.isArray(payload?.availabilityRows)) {
-        setAvailabilityRows(payload.availabilityRows);
-      } else if (
-        Array.isArray(payload?.members) &&
-        Array.isArray(payload?.windows)
-      ) {
-        // fallback to client mappers if you’re using canonical shape
-        setAvailabilityRows(
-          buildAvailabilityRowsFromDb(payload.members, payload.windows)
-        );
+      if (aRes.ok) {
+        const a = await aRes.json();
+        if (Array.isArray(a?.members) && Array.isArray(a?.windows)) {
+          setAvailabilityRows(
+            buildAvailabilityRowsFromApi(a.members, a.windows),
+          );
+        } else {
+          setAvailabilityRows(null);
+        }
       } else {
+        const err = await aRes.json().catch(() => ({}));
+        console.warn('load availability failed', aRes.status, err);
         setAvailabilityRows(null);
       }
 
-      if (Array.isArray(payload?.shiftRows)) {
-        setShiftsRows(payload.shiftRows);
-      } else if (Array.isArray(payload?.templates)) {
-        setShiftsRows(buildShiftRowsFromDb(payload.templates));
+      // ---- Shifts ----
+      const sRes = await fetch(`/api/teams/${effectiveTeamId}/shifts`, {
+        cache: 'no-store',
+        headers,
+      });
+
+      if (sRes.ok) {
+        const s = await sRes.json();
+        if (Array.isArray(s?.templates)) {
+          setShiftsRows(buildShiftRowsFromApi(s.templates));
+        } else {
+          setShiftsRows(null);
+        }
       } else {
+        const err = await sRes.json().catch(() => ({}));
+        console.warn('load shifts failed', sRes.status, err);
         setShiftsRows(null);
       }
     })();
@@ -205,6 +218,105 @@ export default function UploadDataDisplayOnly({
   const handlePickTeam = (t: { id: number; name: string }) => {
     setSelectedTeamId(t.id);
     setSelectedTeamName(t.name);
+    setDeleteError(null);
+  };
+
+  const handleDeleteTeam = async () => {
+    if (!effectiveTeamId) return;
+
+    const confirm = await Swal.fire({
+      title: 'Delete team?',
+      html: `Delete <b>${effectiveTeamName ?? 'this team'}</b>?<br/><br/>This cannot be undone.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, delete',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
+      focusCancel: true,
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    const token = localStorage.getItem('authToken') ?? '';
+    const headers: HeadersInit = token
+      ? { Authorization: `Bearer ${token}` }
+      : {};
+
+    try {
+      setDeleting(true);
+      setDeleteError(null);
+
+      // optional: show a loading modal
+      Swal.fire({
+        title: 'Deleting…',
+        text: 'Please wait',
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        didOpen: () => Swal.showLoading(),
+      });
+
+      const res = await fetch(`/api/teams/${effectiveTeamId}`, {
+        method: 'DELETE',
+        headers,
+      });
+
+      const raw = await res.text();
+      let payload: any = null;
+      try {
+        payload = raw ? JSON.parse(raw) : null;
+      } catch {
+        payload = raw;
+      }
+
+      if (!res.ok) {
+        const msg =
+          (payload && (payload.message || payload.error)) ||
+          `Failed to delete team (HTTP ${res.status})`;
+        throw new Error(msg);
+      }
+
+      // Refresh list after delete
+      const listRes = await fetch('/api/teams', { cache: 'no-store', headers });
+      const listRaw = await listRes.text();
+      const data = listRes.ok
+        ? ((JSON.parse(listRaw || '[]') as { id: number; name: string }[]) ??
+          [])
+        : [];
+
+      setTeams(data);
+
+      // Pick a new team (first) or clear
+      if (data.length > 0) {
+        setSelectedTeamId(data[0].id);
+        setSelectedTeamName(data[0].name);
+      } else {
+        setSelectedTeamId(null);
+        setSelectedTeamName(null);
+        setAvailabilityRows(null);
+        setShiftsRows(null);
+      }
+
+      await Swal.fire({
+        title: 'Deleted!',
+        text: 'Team deleted successfully.',
+        icon: 'success',
+        timer: 1400,
+        showConfirmButton: false,
+      });
+    } catch (e: any) {
+      const msg = e?.message || 'Unable to delete team';
+
+      setDeleteError(msg);
+
+      await Swal.fire({
+        title: 'Delete failed',
+        text: msg,
+        icon: 'error',
+      });
+    } finally {
+      setDeleting(false);
+      Swal.close(); // closes loading if still open
+    }
   };
 
   const statusText = useMemo(() => {
@@ -240,13 +352,34 @@ export default function UploadDataDisplayOnly({
             )}
           </p>
         </div>
-        <Link
-          href="/teams/new"
-          className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
-        >
-          + Create New Team
-        </Link>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDeleteTeam}
+            disabled={!effectiveTeamId || deleting}
+            className="rounded-lg border border-red-300 bg-red-600 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/50 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-700/20"
+            title={
+              !effectiveTeamId ? 'Select a team to delete' : 'Delete this team'
+            }
+          >
+            {deleting ? 'Deleting...' : '🗑️ Delete Team'}
+          </button>
+
+          <Link
+            href="/teams/new"
+            className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+          >
+            + Create New Team
+          </Link>
+        </div>
       </div>
+
+      {/* Delete error */}
+      {deleteError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {deleteError}
+        </div>
+      )}
 
       {/* Teams selector */}
       <section className="rounded-2xl border p-5">
@@ -340,35 +473,24 @@ export default function UploadDataDisplayOnly({
                 <table className="w-full min-w-[800px] text-left text-sm text-gray-600 dark:text-gray-300">
                   <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-700">
                     <tr className="text-xs uppercase text-gray-700 dark:text-gray-300">
-                      {Object.keys(availabilityRows[0]).map(
-                        (
-                          key // ✅ use [0]
-                        ) => (
-                          <th
-                            key={key}
-                            className="whitespace-nowrap px-3 py-2 font-medium"
-                          >
-                            {key}
-                          </th>
-                        )
-                      )}
+                      {Object.keys(availabilityRows[0]).map((key) => (
+                        <th
+                          key={key}
+                          className="whitespace-nowrap px-3 py-2 font-medium"
+                        >
+                          {key}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
                     {availabilityRows.map((row, i) => (
                       <tr key={i} className="border-t dark:border-gray-700">
-                        {Object.keys(availabilityRows[0]).map(
-                          (
-                            key // ✅ use [0]
-                          ) => (
-                            <td
-                              key={key}
-                              className="whitespace-nowrap px-3 py-2"
-                            >
-                              {String(row[key] ?? '')}
-                            </td>
-                          )
-                        )}
+                        {Object.keys(availabilityRows[0]).map((key) => (
+                          <td key={key} className="whitespace-nowrap px-3 py-2">
+                            {String(row[key] ?? '')}
+                          </td>
+                        ))}
                       </tr>
                     ))}
                   </tbody>
