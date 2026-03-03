@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { loadShiftTemplates } from "@/app/lib/scheduler/loadShiftTemplates";
 
-/* ------------------------------- auth helper ------------------------------ */
 async function requireUser(req: NextRequest) {
   const auth = req.headers.get("authorization") || "";
   const m = auth.match(/^Bearer\s+(.+)$/i);
@@ -30,8 +29,8 @@ const ENUM_TO_DAY: Record<
   SAT: "Saturday",
 };
 
-function toHHMM12hTo24h(hhmmAmpm: string): string {
-  const s = (hhmmAmpm || "").trim();
+function toHHMM12hTo24h(value: string): string {
+  const s = (value || "").trim();
   const m = s.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
   if (!m) return s;
 
@@ -45,13 +44,10 @@ function toHHMM12hTo24h(hhmmAmpm: string): string {
     if (h !== 12) h += 12;
   }
 
-  const hh = String(h).padStart(2, "0");
-  const mm = String(min).padStart(2, "0");
-  return `${hh}:${mm}`;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
 /* ----------------------------------- GET ---------------------------------- */
-// Returns saved shift templates for this team (for your read-only UI panel)
 export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -74,6 +70,15 @@ export async function GET(
 
     const templates = await prisma.shiftTemplate.findMany({
       where: { teamId },
+      select: {
+        id: true,
+        shift: true,
+        jobType: true,
+        day: true,
+        startTime: true,
+        endTime: true,
+        required: true,
+      },
       orderBy: [{ day: "asc" }, { startTime: "asc" }],
     });
 
@@ -85,9 +90,6 @@ export async function GET(
 }
 
 /* ----------------------------------- POST --------------------------------- */
-// Saves shift templates. Supports:
-// 1) your existing body format (templates)
-// 2) CSV import mode: { source: "csv" }
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -96,7 +98,7 @@ export async function POST(
     const user = await requireUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { id } = await ctx.params; // ✅ Next.js 15 fix
+    const { id } = await ctx.params;
     const teamId = Number(id);
     if (!Number.isFinite(teamId)) {
       return NextResponse.json({ error: "bad team id" }, { status: 400 });
@@ -109,76 +111,46 @@ export async function POST(
     if (!team) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const body = await req.json().catch(() => ({} as any));
+    const templatesBody = Array.isArray(body?.templates) ? body.templates : [];
 
-    // ------------------------- CSV IMPORT MODE -------------------------
-    if (body?.source === "csv") {
-      const shifts = loadShiftTemplates();
-
-      await prisma.shiftTemplate.deleteMany({ where: { teamId } });
-
-      const data = shifts.map((t) => ({
-        teamId,
-        shift: t.role,
-        jobType: null,
-        day: t.day,
-        startTime: toHHMM12hTo24h(t.start),
-        endTime: toHHMM12hTo24h(t.end),
-        required: 1,
-      }));
-
-      if (data.length) {
-        await prisma.shiftTemplate.createMany({ data });
-      }
-
-      return NextResponse.json({ ok: true, source: "csv", templates: data.length });
-    }
-
-    // --------------------- EXISTING BODY FORMAT MODE ---------------------
-    const templates = (body?.templates ?? []) as Array<{
-      shiftName: string;
-      jobType?: string | null;
-      weekday: "SUN" | "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT";
-      startHHMM: string;
-      endHHMM: string;
-    }>;
-
-    // ✅ If nothing provided, fall back to CSV import automatically
-    if (!Array.isArray(templates) || templates.length === 0) {
-      const shifts = loadShiftTemplates();
-
-      await prisma.shiftTemplate.deleteMany({ where: { teamId } });
-
-      const data = shifts.map((t) => ({
-        teamId,
-        shift: t.role,
-        jobType: null,
-        day: t.day,
-        startTime: toHHMM12hTo24h(t.start),
-        endTime: toHHMM12hTo24h(t.end),
-        required: 1,
-      }));
-
-      if (data.length) {
-        await prisma.shiftTemplate.createMany({ data });
-      }
-
-      return NextResponse.json({ ok: true, source: "csv-default", templates: data.length });
-    }
-
-    if (!Array.isArray(templates) || templates.length === 0) {
-      return NextResponse.json({ error: "No templates" }, { status: 400 });
-    }
+    const useCsv = body?.source === "csv" || templatesBody.length === 0;
 
     await prisma.shiftTemplate.deleteMany({ where: { teamId } });
 
-    const data = templates.map((t) => ({
+    // CSV mode
+    if (useCsv) {
+      const shifts = loadShiftTemplates();
+
+      const data = shifts.map((t) => ({
+        teamId,
+        shift: t.role,
+        jobType: 'General' as const,
+        day: t.day,
+        startTime: toHHMM12hTo24h(t.start),
+        endTime: toHHMM12hTo24h(t.end),
+        required: 1,
+      }));
+
+      if (data.length) {
+        await prisma.shiftTemplate.createMany({ data });
+      }
+
+      return NextResponse.json({
+        ok: true,
+        source: body?.source === "csv" ? "csv" : "csv-default",
+        templates: data.length,
+      });
+    }
+
+    // Body mode
+    const data = templatesBody.map((t: any) => ({
       teamId,
       shift: t.shiftName,
-      jobType: t.jobType ?? null,
+      jobType: (t.jobType ?? "General"),
       day: ENUM_TO_DAY[t.weekday],
       startTime: t.startHHMM,
       endTime: t.endHHMM,
-      required: 1,
+      required: t.required ?? 1,
     }));
 
     await prisma.shiftTemplate.createMany({ data });

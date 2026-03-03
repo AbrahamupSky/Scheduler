@@ -10,12 +10,13 @@ export type DailyAvailability =
 export type EmployeeAvailability = {
   name: string;
   position: string;
-  ranking: number;
-  leadership: string;
-  minHours: number;
-  maxHours: number;
-  minDays: number;
-  maxDays: number;
+  ranking?: number | null;
+  leadership?: string | null;
+  minHoursWeek?: number | null;
+  maxHoursWeek?: number | null;
+  minDaysWeek?: number | null;
+  maxDaysWeek?: number | null;
+  notes?: string | null;
   availability: Record<string, DailyAvailability>;
 };
 

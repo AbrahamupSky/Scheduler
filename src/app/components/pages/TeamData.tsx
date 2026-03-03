@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import Swal from "sweetalert2";
+import Swal from 'sweetalert2';
 
 /** Helpers to normalize API shape -> table rows */
 const WEEKDAYS = [
@@ -46,6 +46,14 @@ function buildAvailabilityRowsFromApi(
       Name: m.name,
       Job: m.job ?? '',
       Position: m.position ?? '',
+
+      Ranking: m.ranking ?? '',
+      Leadership: m.leadership ?? '',
+      'Min Hours/Week': m.minHoursWeek ?? '',
+      'Max Hours/Week': m.maxHoursWeek ?? '',
+      'Min Days/Week': m.minDaysWeek ?? '',
+      'Max Days/Week': m.maxDaysWeek ?? '',
+      Notes: m.notes ?? '',
     };
     WEEKDAYS.forEach((d) => (row[d] = ''));
     byId.set(m.id, row);
@@ -56,30 +64,64 @@ function buildAvailabilityRowsFromApi(
     if (!row) return;
     const day = INT_TO_DAY[w.dayOfWeek] ?? 'Monday';
     const seg = `${w.startTime}-${w.endTime}`;
-    row[day] = row[day] ? `${row[day]}, ${seg}` : seg;
+    row[day] = row[day] ? `${row[day]}\n${seg}` : seg;
   });
 
   return Array.from(byId.values());
 }
 
-function buildShiftRowsFromApi(
+const SHIFT_DAYS = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+] as const;
+
+function buildShiftRowsCsvStyle(
   templates: Array<{
-    shift: string;
-    jobType?: string | null;
+    // based on your DB response
+    shift: string; // <- this is your JOB_TYPE now (Truck, Prep, BOH General, etc.)
     day: string; // "Monday"
-    startTime: string; // "HH:MM"
-    endTime: string; // "HH:MM"
-    required?: number;
+    startTime: string; // "05:30"
+    endTime: string; // "07:00"
   }>,
 ) {
-  return templates.map((t) => ({
-    Shift: t.shift,
-    Job_Type: t.jobType ?? '',
-    Day: t.day,
-    Start_Time: t.startTime,
-    End_Time: t.endTime,
-    Required: t.required ?? 1,
-  }));
+  // role/jobType -> day -> list of time ranges
+  const map = new Map<string, Record<string, string[]>>();
+
+  for (const t of templates) {
+    const jobType = (t.shift ?? '').trim();
+    if (!jobType) continue;
+
+    if (!map.has(jobType)) {
+      const init: Record<string, string[]> = {};
+      SHIFT_DAYS.forEach((d) => (init[d] = []));
+      map.set(jobType, init);
+    }
+
+    const bucket = map.get(jobType)!;
+    const day = t.day;
+
+    if (SHIFT_DAYS.includes(day as any)) {
+      bucket[day].push(`${t.startTime} - ${t.endTime}`);
+    }
+  }
+
+  // turn into rows like the CSV: first col is Job_Type, then each weekday col
+  const rows = Array.from(map.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([jobType, byDay]) => {
+      const row: any = { Job_Type: jobType };
+      SHIFT_DAYS.forEach((d) => {
+        // join multiple shifts in same day (if there are multiple templates)
+        row[d] = byDay[d].join('\n');
+      });
+      return row;
+    });
+
+  return rows;
 }
 
 /** Component (display-only) */
@@ -186,7 +228,7 @@ export default function TeamData({
       if (sRes.ok) {
         const s = await sRes.json();
         if (Array.isArray(s?.templates)) {
-          setShiftsRows(buildShiftRowsFromApi(s.templates));
+          setShiftsRows(buildShiftRowsCsvStyle(s.templates));
         } else {
           setShiftsRows(null);
         }
@@ -470,13 +512,19 @@ export default function TeamData({
           {availabilityRows && availabilityRows.length > 0 ? (
             <div className="relative mt-2 rounded-lg border border-neutral-200 bg-white shadow-md dark:border-gray-700 dark:bg-gray-900">
               <div className="h-80 overflow-x-auto overflow-y-auto">
-                <table className="w-full min-w-[800px] text-left text-sm text-gray-600 dark:text-gray-300">
+                <table className="w-full min-w-[1100px] table text-left text-sm text-gray-500 dark:text-gray-300">
                   <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-700">
                     <tr className="text-xs uppercase text-gray-700 dark:text-gray-300">
                       {Object.keys(availabilityRows[0]).map((key) => (
                         <th
                           key={key}
-                          className="whitespace-nowrap px-3 py-2 font-medium"
+                          className={
+                            key === 'Name'
+                              ? 'whitespace-nowrap px-3 py-2 font-medium min-w-[220px]'
+                              : key === 'Notes'
+                                ? 'whitespace-nowrap px-3 py-2 font-medium min-w-[260px]'
+                                : 'whitespace-nowrap px-3 py-2 font-medium min-w-[140px]'
+                          }
                         >
                           {key}
                         </th>
@@ -487,8 +535,17 @@ export default function TeamData({
                     {availabilityRows.map((row, i) => (
                       <tr key={i} className="border-t dark:border-gray-700">
                         {Object.keys(availabilityRows[0]).map((key) => (
-                          <td key={key} className="whitespace-nowrap px-3 py-2">
-                            {String(row[key] ?? '')}
+                          <td
+                            key={key}
+                            className={
+                              key === 'Name'
+                                ? 'px-3 py-2 align-top whitespace-nowrap min-w-[220px]'
+                                : key === 'Notes'
+                                  ? 'px-3 py-2 align-top whitespace-pre-line break-words min-w-[260px]'
+                                  : 'px-3 py-2 align-top whitespace-pre-line break-words min-w-[140px]'
+                            }
+                          >
+                            {row[key] == null || row[key] === "" ? "—" : String(row[key])}
                           </td>
                         ))}
                       </tr>
@@ -518,7 +575,7 @@ export default function TeamData({
           {shiftsRows && shiftsRows.length > 0 ? (
             <div className="relative mt-2 rounded-lg border border-neutral-200 bg-white shadow-md dark:border-gray-700 dark:bg-gray-900">
               <div className="h-80 overflow-x-auto overflow-y-auto">
-                <table className="w-full min-w-[600px] table-fixed text-left text-sm text-gray-500 dark:text-gray-300">
+                <table className="w-full min-w-[1100px] table-fixed text-left text-sm text-gray-500 dark:text-gray-300">
                   <thead className="sticky top-0 z-10 bg-gray-50 text-xs uppercase text-gray-700 dark:bg-gray-700 dark:text-gray-400">
                     <tr>
                       {Object.keys(shiftsRows[0]).map((k) => (
@@ -535,7 +592,10 @@ export default function TeamData({
                     {shiftsRows.map((r, i) => (
                       <tr key={i} className="border-t dark:border-gray-700">
                         {Object.keys(shiftsRows[0]).map((k) => (
-                          <td key={k} className="whitespace-nowrap px-3 py-2">
+                          <td
+                            key={k}
+                            className="px-3 py-2 whitespace-pre-line break-words align-top"
+                          >
                             {String(r[k] ?? '')}
                           </td>
                         ))}

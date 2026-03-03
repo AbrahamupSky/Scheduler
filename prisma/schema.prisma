@@ -33,6 +33,38 @@ enum OptimizationPriority {
   MAXIMIZE_COVERAGE
 }
 
+enum CapabilityCode {
+  FOH
+  BOH
+  TRUCK
+  PREP
+}
+
+model Role {
+  id        Int      @id @default(autoincrement())
+  teamId    Int
+  name      String   // ex: "FOH BOH Truck Prep" or "BOH Only"
+  createdAt DateTime @default(now())
+
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  members   TeamMember[]
+  caps      RoleCapability[]
+
+  @@unique([teamId, name])
+  @@index([teamId])
+}
+
+model RoleCapability {
+  roleId    Int
+  code      CapabilityCode
+  createdAt DateTime @default(now())
+
+  role      Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, code])
+  @@index([code])
+}
+
 model User {
   id           Int       @id @default(autoincrement())
   username     String    @unique
@@ -53,6 +85,7 @@ model Team {
 
   // Opposite sides for the relations below:
   members        TeamMember[]
+  roles          Role[]
   shiftTemplates ShiftTemplate[]
   irregularEvents IrregularEvent[]
   schedules      SavedSchedule[]
@@ -71,6 +104,17 @@ model TeamMember {
   position    String?
   // Opposite side of AvailabilityWindow.member
   availability AvailabilityWindow[]
+
+  ranking        Int?
+  leadership     String?  // or Boolean? (depends on your CSV)
+  minHoursWeek   Int?
+  maxHoursWeek   Int?
+  minDaysWeek    Int?
+  maxDaysWeek    Int?
+  notes          String?
+
+  roleId   Int?
+  role     Role?  @relation(fields: [roleId], references: [id], onDelete: SetNull)
 
   createdAt   DateTime            @default(now())
   @@unique([teamId, name])  // same person name once per team

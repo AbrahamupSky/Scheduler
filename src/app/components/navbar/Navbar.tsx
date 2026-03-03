@@ -9,6 +9,7 @@ import GenerateSchedule from '@/app/generate/page';
 import ViewSchedule from '../pages/ViewSchedule';
 import ExportSchedule from '../pages/ExportSchedule';
 import SavedSchedules from '../pages/SavedSchedules';
+import RoleCreator from '../pages/RoleCreator';
 
 // ❌ REMOVE this: import router from 'next/router';
 
@@ -174,12 +175,8 @@ export default function AppShell() {
         return <ViewSchedule />;
       case 'Export':
         return (
-          <ExportSchedule
-            schedule={generatedSchedule}
-            startDate={startDateISO}
-            endDate={endDateISO}
-            teamName={teamName}
-            onAfterExport={(file, fmt) => console.log('exported', file, fmt)}
+          <RoleCreator
+            teamId={Number(localStorage.getItem('currentTeamId')) || null}
           />
         );
       case 'Saved Schedules':
@@ -254,7 +251,7 @@ export default function AppShell() {
               'Irregular Events',
               'Generate Schedule',
               'View Schedule',
-              'Export',
+              'Roles',
               'Saved Schedules',
             ].map((p) => (
               <button

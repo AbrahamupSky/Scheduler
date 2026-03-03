@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { loadShiftTemplates } from "@/lib/scheduler/loadShiftTemplates";
-import { loadAvailability } from "@/lib/scheduler/loadAvailability";
+import { loadShiftTemplates } from "@/app/lib/scheduler/loadShiftTemplates";
+import { loadAvailability } from "@/app/lib/scheduler/loadAvailability";
 
 /* -------------------------- auth helper (Bearer) -------------------------- */
 async function getUserFromAuth(req: NextRequest) {

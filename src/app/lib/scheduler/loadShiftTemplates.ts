@@ -32,9 +32,13 @@ export function loadShiftTemplates(): ShiftTemplate[] {
   const shifts: ShiftTemplate[] = [];
 
   for (const row of records) {
-    const role = row["Unnamed: 0"]?.trim();
+    // the first column in the csv has no header text, so depending on the parser
+    // it may be called "" or `Unnamed: 0`.  just grab whatever the first key is
+    // instead of hard–coding the header name.
+    const firstKey = Object.keys(row)[0];
+    const role = row[firstKey]?.trim();
 
-    if (!role) continue;
+    if (!role) continue; // skip empty rows
 
     for (const day of DAYS) {
       const value = row[day]?.trim();
