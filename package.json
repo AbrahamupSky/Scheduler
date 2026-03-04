@@ -9,22 +9,28 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "csv-parse": "^6.1.0",
     "daisyui": "^5.3.7",
     "flowbite": "^3.1.2",
     "flowbite-react": "^0.12.9",
     "next": "15.5.5",
+    "papaparse": "^5.5.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "sweetalert2": "^11.26.2"
+    "sweetalert2": "^11.26.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@prisma/client": "^6.17.1",
     "@tailwindcss/postcss": "^4.1.14",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.5.5",
+    "prisma": "^6.17.1",
     "tailwindcss": "^4.1.14",
     "typescript": "^5",
     "webpack-cli": "^6.0.1"

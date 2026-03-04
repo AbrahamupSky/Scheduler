@@ -30,9 +30,6 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
-
 # vercel
 .vercel
 
@@ -41,5 +38,7 @@ yarn-error.log*
 next-env.d.ts
 
 bun.lock
-.flowbite-react
 .vscode
+
+# prisma
+/prisma/prisma/dev.db
