@@ -25,18 +25,16 @@ export async function GET(
 ) {
   try {
     const user = await getUserFromAuth(req);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { id } = await ctx.params;
-
     const scheduleId = Number(id);
+
     if (!Number.isFinite(scheduleId)) {
       return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
     }
 
-    // Load schedule AND make sure it belongs to this user (through team.ownerId)
+    // Load schedule AND ensure it belongs to this user (through team.ownerId)
     const schedule = await prisma.savedSchedule.findFirst({
       where: {
         id: scheduleId,
@@ -58,14 +56,13 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // NEW: Load CSV-driven templates + availability
+    // Keep what your UI expects
     const shiftTemplates = loadShiftTemplates();
     const availability = loadAvailability();
 
     return NextResponse.json({
       schedule: {
         ...schedule,
-        // ensure JSON comes back as your GeneratedSchedule
         data: schedule.data,
       },
       shiftTemplates,
@@ -75,4 +72,62 @@ export async function GET(
     console.error("GET /api/schedules/[id] error:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
+}
+
+/* ---------------------------------- PATCH --------------------------------- */
+/**
+ * Save edits to an existing schedule.
+ * Expects body: { data: <GeneratedSchedule JSON>, name?: string }
+ */
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  try {
+    const user = await getUserFromAuth(req);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { id } = await ctx.params;
+    const scheduleId = Number(id);
+
+    if (!Number.isFinite(scheduleId)) {
+      return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
+    }
+
+    const body = await req.json().catch(() => ({} as any));
+    const data = body?.data;
+    const name = typeof body?.name === "string" ? body.name.trim() : undefined;
+
+    if (!data) {
+      return NextResponse.json({ error: "Missing data" }, { status: 400 });
+    }
+
+    // Ensure schedule belongs to this user
+    const existing = await prisma.savedSchedule.findFirst({
+      where: { id: scheduleId, team: { ownerId: user.id } },
+      select: { id: true },
+    });
+
+    if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    const updated = await prisma.savedSchedule.update({
+      where: { id: scheduleId },
+      data: {
+        ...(name ? { name } : {}),
+        data: data as any,
+      },
+      select: { id: true },
+    });
+
+    return NextResponse.json({ ok: true, id: updated.id });
+  } catch (err) {
+    console.error("PATCH /api/schedules/[id] error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}
+
+/* ----------------------------------- PUT ---------------------------------- */
+/** Support PUT if your frontend uses it */
+export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return PATCH(req, ctx);
 }

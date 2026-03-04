@@ -33,12 +33,54 @@ type RulesMap = Record<string, Rule>;
 
 function defaultRulesV1(): Rule[] {
   return [
-    { name: 'max_shifts_per_day', description: '', type: 'int', value: 2, enabled: true, category: 'Daily' },
-    { name: 'max_hours_per_day', description: '', type: 'int', value: 10, enabled: true, category: 'Daily' },
-    { name: 'min_hours_between_shifts', description: '', type: 'int', value: 12, enabled: true, category: 'Time' },
-    { name: 'enforce_availability_strict', description: '', type: 'bool', value: true, enabled: true, category: 'Time' },
-    { name: 'max_weekly_hours', description: '', type: 'int', value: 40, enabled: true, category: 'Workload' },
-    { name: 'balance_workload', description: '', type: 'bool', value: true, enabled: true, category: 'Workload' },
+    {
+      name: 'max_shifts_per_day',
+      description: '',
+      type: 'int',
+      value: 2,
+      enabled: true,
+      category: 'Daily',
+    },
+    {
+      name: 'max_hours_per_day',
+      description: '',
+      type: 'int',
+      value: 10,
+      enabled: true,
+      category: 'Daily',
+    },
+    {
+      name: 'min_hours_between_shifts',
+      description: '',
+      type: 'int',
+      value: 12,
+      enabled: true,
+      category: 'Time',
+    },
+    {
+      name: 'enforce_availability_strict',
+      description: '',
+      type: 'bool',
+      value: true,
+      enabled: true,
+      category: 'Time',
+    },
+    {
+      name: 'max_weekly_hours',
+      description: '',
+      type: 'int',
+      value: 40,
+      enabled: true,
+      category: 'Workload',
+    },
+    {
+      name: 'balance_workload',
+      description: '',
+      type: 'bool',
+      value: true,
+      enabled: true,
+      category: 'Workload',
+    },
   ];
 }
 
@@ -48,12 +90,6 @@ function rulesToMap(rules: Rule[]): RulesMap {
   return out;
 }
 
-function isRuleOn(rules: RulesMap, name: string, fallback = false) {
-  const r = rules[name];
-  if (!r) return fallback;
-  if (!r.enabled) return false;
-  return true;
-}
 function ruleNum(rules: RulesMap, name: string, fallback: number) {
   const r = rules[name];
   if (!r || !r.enabled) return fallback;
@@ -74,7 +110,15 @@ function parseHHMMtoMin(hhmm: string) {
   if (!m) return null;
   const hh = Number(m[1]);
   const mm = Number(m[2]);
-  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  if (
+    !Number.isFinite(hh) ||
+    !Number.isFinite(mm) ||
+    hh < 0 ||
+    hh > 23 ||
+    mm < 0 ||
+    mm > 59
+  )
+    return null;
   return hh * 60 + mm;
 }
 
@@ -83,7 +127,6 @@ function minutesToHours(min: number) {
 }
 
 function toYMD(d: Date) {
-  // YYYY-MM-DD (local)
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -116,25 +159,32 @@ function dayStringToEnum(d: string): WdEnum | null {
   return null;
 }
 
-/* --------------------------- Blackout overlap ---------------------------- */
-function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number) {
-  // [start, end) overlap
+function rangesOverlap(
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number,
+) {
   return aStart < bEnd && bStart < aEnd;
 }
 
 /* -------------------------- Generator core types -------------------------- */
+// capability codes (match your Prisma enum)
+type CapCode = 'FOH' | 'BOH' | 'TRUCK' | 'PREP';
+
 type MemberDb = {
   id: number;
   name: string;
   job: string | null;
   position: string | null;
   availability: { dayOfWeek: number; startTime: string; endTime: string }[];
+  role: { id: number; name: string; caps: { code: CapCode }[] } | null;
 };
 
 type ShiftTemplateDb = {
   id: number;
   shift: string;
-  jobType: string | null;
+  jobType: any; // can be CapCode (enum) OR string in your current DB
   day: string;
   startTime: string;
   endTime: string;
@@ -147,21 +197,21 @@ type IrregularEventDb = {
   date: Date;
   startTime: string;
   endTime: string;
-  jobType: string | null;
+  jobType: any; // can be CapCode? or string?
 };
 
 type ShiftInstance = {
   shiftId: string;
-  date: string; // YMD
+  date: string;
   weekday: WdEnum;
   shiftName: string;
-  jobType: string | null;
+  jobType: CapCode; // normalized
   startHHMM: string;
   endHHMM: string;
   startMin: number;
   endMin: number;
   required: number;
-  assigned: number[]; // memberIds
+  assigned: number[];
   unfilled: number;
   blocked: boolean;
   blockedReason?: string;
@@ -176,7 +226,7 @@ type GeneratedSchedule = {
     date: string;
     weekday: WdEnum;
     shiftName: string;
-    jobType: string | null;
+    jobType: CapCode;
     startHHMM: string;
     endHHMM: string;
     required: number;
@@ -192,17 +242,31 @@ type GeneratedSchedule = {
   notes: string[];
 };
 
+/* -------------------- Normalize jobType to CapabilityCode ------------------ */
+function toCapCode(x: unknown): CapCode | null {
+  const s = String(x ?? '')
+    .trim()
+    .toUpperCase();
+
+  // accept common human strings too
+  if (s === 'TRUCK' || s === 'DELIVERY') return 'TRUCK';
+  if (s === 'PREP') return 'PREP';
+  if (s === 'FOH' || s === 'FRONT' || s === 'FRONT OF HOUSE') return 'FOH';
+  if (s === 'BOH' || s === 'BACK' || s === 'BACK OF HOUSE') return 'BOH';
+
+  return null;
+}
+
 /* ----------------------------- Build instances ---------------------------- */
 function buildShiftInstances(
   templates: ShiftTemplateDb[],
   startYMD: string,
   endYMD: string,
-  irregular: IrregularEventDb[]
+  irregular: IrregularEventDb[],
 ): { instances: ShiftInstance[]; notes: string[] } {
   const notes: string[] = [];
   const dates = enumerateDates(startYMD, endYMD);
 
-  // index irregular by date string
   const irregularByDate = new Map<string, IrregularEventDb[]>();
   for (const ev of irregular) {
     const ymd = toYMD(new Date(ev.date));
@@ -221,14 +285,23 @@ function buildShiftInstances(
       const tWd = dayStringToEnum(t.day);
       if (!tWd || tWd !== weekday) continue;
 
-      const sMin = parseHHMMtoMin(t.startTime);
-      const eMin = parseHHMMtoMin(t.endTime);
-      if (sMin == null || eMin == null || eMin <= sMin) {
-        notes.push(`Template "${t.shift}" has invalid time (${t.startTime}-${t.endTime}). Skipped.`);
+      const cap = toCapCode(t.jobType);
+      if (!cap) {
+        notes.push(
+          `Template "${t.shift}" has unknown jobType "${String(t.jobType)}". Skipped.`,
+        );
         continue;
       }
 
-      // Blackout: if any irregular event overlaps this shift (same jobType or event jobType null)
+      const sMin = parseHHMMtoMin(t.startTime);
+      const eMin = parseHHMMtoMin(t.endTime);
+      if (sMin == null || eMin == null || eMin <= sMin) {
+        notes.push(
+          `Template "${t.shift}" has invalid time (${t.startTime}-${t.endTime}). Skipped.`,
+        );
+        continue;
+      }
+
       const evs = irregularByDate.get(ymd) ?? [];
       let blocked = false;
       let blockedReason: string | undefined;
@@ -238,7 +311,9 @@ function buildShiftInstances(
         const evEnd = parseHHMMtoMin(ev.endTime);
         if (evStart == null || evEnd == null) continue;
 
-        const jobMatch = ev.jobType == null || ev.jobType === t.jobType;
+        const evCap = ev.jobType == null ? null : toCapCode(ev.jobType);
+        const jobMatch = evCap == null || evCap === cap;
+
         if (jobMatch && rangesOverlap(sMin, eMin, evStart, evEnd)) {
           blocked = true;
           blockedReason = `Blackout: "${ev.title}" ${ev.startTime}-${ev.endTime}`;
@@ -246,14 +321,14 @@ function buildShiftInstances(
         }
       }
 
-      const shiftId = `${ymd}_${weekday}_${t.shift}_${t.startTime}_${t.endTime}_${t.jobType ?? 'ANY'}`;
+      const shiftId = `${ymd}_${weekday}_${t.shift}_${t.startTime}_${t.endTime}_${cap}`;
 
       instances.push({
         shiftId,
         date: ymd,
         weekday,
         shiftName: t.shift,
-        jobType: t.jobType,
+        jobType: cap,
         startHHMM: t.startTime,
         endHHMM: t.endTime,
         startMin: sMin,
@@ -267,22 +342,19 @@ function buildShiftInstances(
     }
   }
 
-  // sort chronologically
-  instances.sort((a, b) => (a.date === b.date ? a.startMin - b.startMin : a.date.localeCompare(b.date)));
-
+  instances.sort((a, b) =>
+    a.date === b.date ? a.startMin - b.startMin : a.date.localeCompare(b.date),
+  );
   return { instances, notes };
 }
 
 /* ----------------------------- Eligibility checks ---------------------------- */
-function availabilityCoversShiftStrict(
-  member: MemberDb,
-  shift: ShiftInstance
-) {
-  // member.availability windows store dayOfWeek as int (0=SUN..6=SAT)
+function availabilityCoversShiftStrict(member: MemberDb, shift: ShiftInstance) {
   const dayIdx = INT_TO_ENUM.indexOf(shift.weekday);
-  const windows = member.availability.filter((w) => (w.dayOfWeek ?? 0) === dayIdx);
+  const windows = member.availability.filter(
+    (w) => (w.dayOfWeek ?? 0) === dayIdx,
+  );
 
-  // must have at least one window that fully covers shift
   for (const w of windows) {
     const s = parseHHMMtoMin(w.startTime);
     const e = parseHHMMtoMin(w.endTime);
@@ -292,72 +364,94 @@ function availabilityCoversShiftStrict(
   return false;
 }
 
+function memberHasCapability(member: MemberDb, cap: CapCode) {
+  const caps = member.role?.caps ?? [];
+  return caps.some((c) => c.code === cap);
+}
+
 /* ----------------------------- Greedy fill (v1) ---------------------------- */
-export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const user = await getUserFromAuth(req);
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user)
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = Number(ctx.params.id);
-    if (!Number.isFinite(teamId)) return NextResponse.json({ error: 'Invalid team id' }, { status: 400 });
+    const { id } = await params;
+    const teamId = Number(id);
+    if (!Number.isFinite(teamId)) {
+      return NextResponse.json({ error: 'Invalid team id' }, { status: 400 });
+    }
 
     const body = await req.json().catch(() => ({}));
     const startDate = String(body?.startDate ?? '').trim();
     const endDate = String(body?.endDate ?? '').trim();
-    const scheduleName = String(body?.scheduleName ?? `Schedule ${startDate} → ${endDate}`).trim();
+    const scheduleName = String(
+      body?.scheduleName ?? `Schedule ${startDate} → ${endDate}`,
+    ).trim();
     const optimization = String(body?.optimization ?? 'BALANCED_WORKLOAD');
 
     if (!startDate || !endDate) {
-      return NextResponse.json({ error: 'startDate and endDate are required (YYYY-MM-DD).' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'startDate and endDate are required (YYYY-MM-DD).' },
+        { status: 400 },
+      );
     }
 
-    // Load team + data (owner-gated)
     const team = await prisma.team.findFirst({
       where: { id: teamId, ownerId: user.id },
       include: {
-        members: { include: { availability: true } },
+        members: {
+          include: {
+            availability: true,
+            role: { include: { caps: true } }, // ✅ critical
+          },
+        },
         shiftTemplates: true,
         irregularEvents: true,
-        rules: true, // SchedulingRules? (may be null / empty model)
+        rules: true,
       },
     });
 
-    if (!team) return NextResponse.json({ error: 'Team not found' }, { status: 404 });
+    if (!team)
+      return NextResponse.json({ error: 'Team not found' }, { status: 404 });
 
-    // ---- Rules (v1): DB optional. If you haven't added fields yet, fallback to defaults.
-    // If later you add SchedulingRules.data Json, replace this with:
-    // const dbRules = (team.rules as any)?.data as Rule[] | undefined;
     const dbRules: Rule[] | null = null;
     const rulesMap = rulesToMap(dbRules?.length ? dbRules : defaultRulesV1());
 
-    const strictAvailability = ruleBool(rulesMap, 'enforce_availability_strict', true);
+    const strictAvailability = ruleBool(
+      rulesMap,
+      'enforce_availability_strict',
+      true,
+    );
     const maxShiftsPerDay = ruleNum(rulesMap, 'max_shifts_per_day', 2);
     const maxHoursPerDay = ruleNum(rulesMap, 'max_hours_per_day', 10);
     const maxWeeklyHours = ruleNum(rulesMap, 'max_weekly_hours', 40);
     const minHoursBetween = ruleNum(rulesMap, 'min_hours_between_shifts', 12);
     const balanceWorkload = ruleBool(rulesMap, 'balance_workload', true);
 
-    // Build shift instances (with blackout applied)
     const { instances, notes } = buildShiftInstances(
       team.shiftTemplates as any,
       startDate,
       endDate,
-      team.irregularEvents as any
+      team.irregularEvents as any,
     );
 
-    // Track assignments
     const memberById = new Map<number, MemberDb>(
-      (team.members as any).map((m: any) => [m.id, m])
+      (team.members as any).map((m: any) => [m.id, m]),
     );
 
-    // hours/shifts per member
     const hoursByMember: Record<number, number> = {};
     const shiftsByMember: Record<number, number> = {};
 
-    // per-day tracking + last shift end for min gap
-    const shiftsByMemberByDate = new Map<string, number>(); // `${memberId}_${date}` -> count
-    const minutesByMemberByDate = new Map<string, number>(); // `${memberId}_${date}` -> minutes
-    const lastShiftEndByMember = new Map<number, { date: string; endMin: number }>(); // last assigned shift
+    const shiftsByMemberByDate = new Map<string, number>();
+    const minutesByMemberByDate = new Map<string, number>();
+    const lastShiftEndByMember = new Map<
+      number,
+      { date: string; endMin: number }
+    >();
 
     const scheduleNotes: string[] = [...notes];
 
@@ -366,48 +460,45 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     }
 
     function weekKey(ymd: string) {
-      // simple week bucket (v1): use ISO-ish week start = Monday
       const d = new Date(`${ymd}T00:00:00`);
-      const day = d.getDay(); // 0 Sun..6 Sat
-      const diffToMon = (day + 6) % 7; // Mon=0
+      const day = d.getDay();
+      const diffToMon = (day + 6) % 7;
       d.setDate(d.getDate() - diffToMon);
-      return toYMD(d); // weekStartYMD
+      return toYMD(d);
     }
-    const minutesByMemberByWeek = new Map<string, number>(); // `${memberId}_${weekStart}` -> minutes
+    const minutesByMemberByWeek = new Map<string, number>();
 
     function eligible(member: MemberDb, shift: ShiftInstance): boolean {
       if (shift.blocked || shift.required <= 0) return false;
 
-      // Availability
+      // ✅ capability check (THIS fixes “wrong job”)
+      if (!memberHasCapability(member, shift.jobType)) return false;
+
       if (strictAvailability) {
         if (!availabilityCoversShiftStrict(member, shift)) return false;
       }
 
-      // max shifts per day
       const dayK = getKey(member.id, shift.date);
       const dayShiftCount = shiftsByMemberByDate.get(dayK) ?? 0;
       if (dayShiftCount >= maxShiftsPerDay) return false;
 
-      // max hours per day
       const dayMinutes = minutesByMemberByDate.get(dayK) ?? 0;
       const shiftMinutes = shift.endMin - shift.startMin;
-      if (minutesToHours(dayMinutes + shiftMinutes) > maxHoursPerDay) return false;
+      if (minutesToHours(dayMinutes + shiftMinutes) > maxHoursPerDay)
+        return false;
 
-      // max weekly hours
       const wk = weekKey(shift.date);
       const wkK = `${member.id}_${wk}`;
       const wkMinutes = minutesByMemberByWeek.get(wkK) ?? 0;
-      if (minutesToHours(wkMinutes + shiftMinutes) > maxWeeklyHours) return false;
+      if (minutesToHours(wkMinutes + shiftMinutes) > maxWeeklyHours)
+        return false;
 
-      // min hours between shifts (compare to last assigned shift)
       const last = lastShiftEndByMember.get(member.id);
       if (last) {
-        // if last shift is same date => compare mins
         if (last.date === shift.date) {
           const gapMin = shift.startMin - last.endMin;
           if (gapMin < minHoursBetween * 60) return false;
         } else {
-          // cross-day: approximate by converting to timestamps
           const lastDt = new Date(`${last.date}T00:00:00`);
           const thisDt = new Date(`${shift.date}T00:00:00`);
           const lastEnd = new Date(lastDt);
@@ -425,7 +516,6 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     }
 
     function score(member: MemberDb, shift: ShiftInstance): number {
-      // lower is better
       const dayK = getKey(member.id, shift.date);
       const dayMinutes = minutesByMemberByDate.get(dayK) ?? 0;
       const dayShifts = shiftsByMemberByDate.get(dayK) ?? 0;
@@ -435,18 +525,16 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       const wkMinutes = minutesByMemberByWeek.get(wkK) ?? 0;
 
       if (!balanceWorkload) {
-        // simple: prefer whoever has fewer shifts today
         return dayShifts * 1000 + dayMinutes;
       }
-
-      // weighted to balance workload across week primarily
       return wkMinutes * 2 + dayMinutes * 1.5 + dayShifts * 200;
     }
 
-    // Fill shifts
     for (const shift of instances) {
       if (shift.blocked) {
-        scheduleNotes.push(`⛔ ${shift.date} ${shift.shiftName} blocked (${shift.blockedReason})`);
+        scheduleNotes.push(
+          `⛔ ${shift.date} ${shift.shiftName} blocked (${shift.blockedReason})`,
+        );
         continue;
       }
 
@@ -461,37 +549,51 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       for (const m of candidates) {
         if (shift.assigned.length >= need) break;
 
-        // assign
+        if (!memberHasCapability(m, shift.jobType)) {
+          scheduleNotes.push(
+            `🚫 Blocked: ${m.name} lacks capability "${shift.jobType}" for ${shift.shiftName} on ${shift.date}`,
+          );
+          continue;
+        }
+
         shift.assigned.push(m.id);
         const shiftMinutes = shift.endMin - shift.startMin;
 
-        // update day stats
         const dayK = getKey(m.id, shift.date);
-        shiftsByMemberByDate.set(dayK, (shiftsByMemberByDate.get(dayK) ?? 0) + 1);
-        minutesByMemberByDate.set(dayK, (minutesByMemberByDate.get(dayK) ?? 0) + shiftMinutes);
+        shiftsByMemberByDate.set(
+          dayK,
+          (shiftsByMemberByDate.get(dayK) ?? 0) + 1,
+        );
+        minutesByMemberByDate.set(
+          dayK,
+          (minutesByMemberByDate.get(dayK) ?? 0) + shiftMinutes,
+        );
 
-        // update week stats
         const wk = weekKey(shift.date);
         const wkK = `${m.id}_${wk}`;
-        minutesByMemberByWeek.set(wkK, (minutesByMemberByWeek.get(wkK) ?? 0) + shiftMinutes);
+        minutesByMemberByWeek.set(
+          wkK,
+          (minutesByMemberByWeek.get(wkK) ?? 0) + shiftMinutes,
+        );
 
-        // update overall
-        hoursByMember[m.id] = (hoursByMember[m.id] ?? 0) + minutesToHours(shiftMinutes);
+        hoursByMember[m.id] =
+          (hoursByMember[m.id] ?? 0) + minutesToHours(shiftMinutes);
         shiftsByMember[m.id] = (shiftsByMember[m.id] ?? 0) + 1;
 
-        // update last end
-        lastShiftEndByMember.set(m.id, { date: shift.date, endMin: shift.endMin });
+        lastShiftEndByMember.set(m.id, {
+          date: shift.date,
+          endMin: shift.endMin,
+        });
       }
 
       shift.unfilled = Math.max(0, shift.required - shift.assigned.length);
       if (shift.unfilled > 0) {
         scheduleNotes.push(
-          `⚠️ Unfilled: ${shift.date} ${shift.shiftName} (${shift.startHHMM}-${shift.endHHMM}) needs ${shift.required}, assigned ${shift.assigned.length}`
+          `⚠️ Unfilled: ${shift.date} ${shift.shiftName} (${shift.startHHMM}-${shift.endHHMM}) needs ${shift.required}, assigned ${shift.assigned.length}`,
         );
       }
     }
 
-    // Build response schedule
     let totalUnfilledSlots = 0;
     let unfilledShifts = 0;
 
@@ -545,7 +647,6 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       notes: scheduleNotes,
     };
 
-    // Save to DB
     const saved = await prisma.savedSchedule.create({
       data: {
         teamId,
@@ -558,7 +659,10 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       select: { id: true },
     });
 
-    return NextResponse.json({ schedule: generated, savedScheduleId: saved.id });
+    return NextResponse.json({
+      schedule: generated,
+      savedScheduleId: saved.id,
+    });
   } catch (err: any) {
     console.error('POST /api/teams/[id]/generate error:', err);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });

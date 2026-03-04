@@ -52,7 +52,7 @@ function recomputeUnfilled(d: GeneratedSchedule): GeneratedSchedule {
 function addAssigned(
   d: GeneratedSchedule,
   shiftId: string,
-  member: { id: number; name: string }
+  member: { id: number; name: string },
 ) {
   const next = {
     ...d,
@@ -73,7 +73,11 @@ function addAssigned(
   return recomputeUnfilled(next);
 }
 
-function removeAssigned(d: GeneratedSchedule, shiftId: string, memberId: number) {
+function removeAssigned(
+  d: GeneratedSchedule,
+  shiftId: string,
+  memberId: number,
+) {
   const next = {
     ...d,
     shifts: d.shifts.map((s) => {
@@ -113,7 +117,9 @@ export default function SchedulesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const token =
-    typeof window !== 'undefined' ? localStorage.getItem('authToken') ?? '' : '';
+    typeof window !== 'undefined'
+      ? (localStorage.getItem('authToken') ?? '')
+      : '';
 
   // Load teams
   useEffect(() => {
@@ -160,7 +166,8 @@ export default function SchedulesPage() {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         });
         const payload = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(payload?.error ?? 'Failed to load schedules');
+        if (!res.ok)
+          throw new Error(payload?.error ?? 'Failed to load schedules');
 
         setList(payload.schedules ?? []);
       } catch (e: any) {
@@ -246,19 +253,24 @@ export default function SchedulesPage() {
       setSaving(true);
       setError(null);
 
-      const res = await fetch(`/api/schedules/${schedule.id}`, {
+      const scheduleId = (schedule as any)?.id; // ideally schedule.id
+      if (!scheduleId) throw new Error('Missing schedule id');
+
+      const res = await fetch(`/api/schedules/${scheduleId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ data: draft }),
+        body: JSON.stringify({
+          data: draft,
+          name: (schedule as any)?.name, // optional
+        }),
       });
 
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload?.error ?? 'Failed to save schedule');
 
-      // update local schedule view
       setSchedule((prev) => (prev ? { ...prev, data: draft } : prev));
       setEditMode(false);
     } catch (e: any) {
@@ -266,6 +278,57 @@ export default function SchedulesPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const exportCSV = () => {
+    if (!schedule?.data?.shifts) return;
+
+    const rows = [
+      [
+        'Date',
+        'Weekday',
+        'Shift',
+        'Job',
+        'Start',
+        'End',
+        'Required',
+        'Assigned',
+        'Unfilled',
+      ],
+    ];
+
+    for (const s of schedule.data.shifts) {
+      rows.push([
+        s.date,
+        s.weekday,
+        s.shiftName,
+        s.jobType ?? '',
+        s.startHHMM,
+        s.endHHMM,
+        String(s.required),
+        s.assigned?.map((a: any) => a.name).join(', ') ?? '',
+        String(s.unfilled ?? 0),
+      ]);
+    }
+
+    const csvContent = rows
+      .map((row) =>
+        row
+          .map((field) => `"${String(field ?? '').replace(/"/g, '""')}"`)
+          .join(','),
+      )
+      .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `schedule_${schedule.startDate}_${schedule.endDate}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const activeData = editMode ? draft : schedule?.data;
@@ -336,7 +399,9 @@ export default function SchedulesPage() {
               value={teamId ?? ''}
               onChange={(e) => setTeamId(Number(e.target.value))}
               disabled={editMode} // prevent switching while editing
-              title={editMode ? 'Finish editing before switching teams' : undefined}
+              title={
+                editMode ? 'Finish editing before switching teams' : undefined
+              }
             >
               {teams === null && <option value="">Loading…</option>}
               {teams?.length === 0 && <option value="">No teams</option>}
@@ -361,7 +426,7 @@ export default function SchedulesPage() {
             Click one to view details.
           </p>
 
-          <div className="max-h-[520px] overflow-auto rounded-xl border">
+          <div className="max-h-[520px] overflow-auto rounded-xl border border-t dark:border-gray-700">
             {list === null ? (
               <div className="p-4 text-sm text-neutral-500">Loading…</div>
             ) : list.length === 0 ? (
@@ -374,22 +439,26 @@ export default function SchedulesPage() {
                 </div>
               </div>
             ) : (
-              <ul className="divide-y">
+              <ul className="divide-y divide-neutral-200 dark:divide-gray-700 cursor-pointer">
                 {list.map((s) => {
                   const active = s.id === selectedId;
                   return (
                     <li
                       key={s.id}
-                      className={`p-3 ${active ? 'bg-blue-50' : 'bg-white'}`}
+                      className={`p-3 ${active ? 'bg-blue-50' : 'bg-blue-25 hover:bg-blue-200'}`}
                     >
                       <button
-                        className="w-full text-left"
+                        className="w-full text-left cursor-pointer"
                         onClick={() => {
                           if (editMode) return;
                           loadSchedule(s.id);
                         }}
                         disabled={editMode}
-                        title={editMode ? 'Finish editing before switching schedules' : undefined}
+                        title={
+                          editMode
+                            ? 'Finish editing before switching schedules'
+                            : undefined
+                        }
                       >
                         <div className="text-sm font-medium truncate">
                           {s.name}
@@ -457,7 +526,9 @@ export default function SchedulesPage() {
                         className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
                         onClick={saveEdits}
                         disabled={saving || !draft || !hasUnsavedChanges}
-                        title={!hasUnsavedChanges ? 'No changes to save' : undefined}
+                        title={
+                          !hasUnsavedChanges ? 'No changes to save' : undefined
+                        }
                       >
                         {saving ? 'Saving…' : '💾 Save Changes'}
                       </button>
@@ -466,9 +537,11 @@ export default function SchedulesPage() {
 
                   <button
                     className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
-                    onClick={() => alert('Next: export CSV')}
+                    onClick={exportCSV}
                     disabled={editMode}
-                    title={editMode ? 'Finish editing before exporting' : undefined}
+                    title={
+                      editMode ? 'Finish editing before exporting' : undefined
+                    }
                   >
                     ⬇️ Export
                   </button>
@@ -510,9 +583,11 @@ export default function SchedulesPage() {
                           {/* Assigned */}
                           <td className="px-3 py-2">
                             {!editMode ? (
-                              r.assigned.length
-                                ? r.assigned.map((a) => a.name).join(', ')
-                                : '—'
+                              r.assigned.length ? (
+                                r.assigned.map((a) => a.name).join(', ')
+                              ) : (
+                                '—'
+                              )
                             ) : (
                               <div className="space-y-2">
                                 <div className="flex flex-wrap gap-1">
@@ -531,9 +606,9 @@ export default function SchedulesPage() {
                                                 ? removeAssigned(
                                                     d,
                                                     r.shiftId,
-                                                    a.memberId
+                                                    a.memberId,
                                                   )
-                                                : d
+                                                : d,
                                             )
                                           }
                                           title="Remove"
@@ -554,11 +629,13 @@ export default function SchedulesPage() {
                                   defaultValue=""
                                   onChange={(e) => {
                                     const id = Number(e.target.value);
-                                    const m = teamMembers.find((x) => x.id === id);
+                                    const m = teamMembers.find(
+                                      (x) => x.id === id,
+                                    );
                                     if (!m) return;
 
                                     setDraft((d) =>
-                                      d ? addAssigned(d, r.shiftId, m) : d
+                                      d ? addAssigned(d, r.shiftId, m) : d,
                                     );
                                     e.currentTarget.value = '';
                                   }}

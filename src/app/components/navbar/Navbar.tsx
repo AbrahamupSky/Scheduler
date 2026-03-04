@@ -137,9 +137,9 @@ export default function AppShell() {
     | 'Scheduling Rules'
     | 'Irregular Events'
     | 'Generate Schedule'
-    | 'View Schedule'
-    | 'Export'
-    | 'Saved Schedules'
+    | 'Schedules'
+    | 'Roles'
+    | 'Not in use (saved schedules)'
   >('Team Data');
 
   const Body = useMemo(() => {
@@ -171,15 +171,15 @@ export default function AppShell() {
             }}
           />
         );
-      case 'View Schedule':
+      case 'Schedules':
         return <ViewSchedule />;
-      case 'Export':
+      case 'Roles':
         return (
           <RoleCreator
             teamId={Number(localStorage.getItem('currentTeamId')) || null}
           />
         );
-      case 'Saved Schedules':
+      case 'Not in use (saved schedules)':
         return (
           <SavedSchedules
             fetchSavedSchedules={async () => {
@@ -213,7 +213,7 @@ export default function AppShell() {
               if (!res.ok) throw new Error('Delete failed');
             }}
             onLoaded={({ schedule, startDate, endDate }) => {
-              // setGeneratedSchedule(schedule); setStartDateISO(startDate); setEndDateISO(endDate); setPage('View Schedule');
+              // setGeneratedSchedule(schedule); setStartDateISO(startDate); setEndDateISO(endDate); setPage('Schedules');
             }}
           />
         );
@@ -250,9 +250,9 @@ export default function AppShell() {
               'Scheduling Rules',
               'Irregular Events',
               'Generate Schedule',
-              'View Schedule',
+              'Schedules',
               'Roles',
-              'Saved Schedules',
+              'Not in use (saved schedules)',
             ].map((p) => (
               <button
                 key={p}

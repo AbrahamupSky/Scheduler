@@ -137,10 +137,10 @@ model ShiftTemplate {
   team       Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId     Int
   shift      String
-  jobType    String
-  day        String   // or Int if you prefer dayOfWeek
-  startTime  String   // "HH:MM"
-  endTime    String   // "HH:MM"
+  jobType    CapabilityCode  // ✅ change from String to enum
+  day        String
+  startTime  String
+  endTime    String
   required   Int
 
   @@index([teamId, day, jobType, startTime, endTime])
@@ -155,7 +155,7 @@ model IrregularEvent {
   date      DateTime
   startTime String
   endTime   String
-  jobType   String?
+  jobType   CapabilityCode?
 }
 
 model SavedSchedule {
