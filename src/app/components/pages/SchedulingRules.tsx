@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Swal from 'sweetalert2';
 import Link from 'next/link';
+import { RefreshCw, Save, Plus, AlertTriangle, Settings, Clock } from 'lucide-react';
 
 const Toast = Swal.mixin({
   toast: true,
@@ -21,13 +22,10 @@ type RulesV1 = {
   maxHoursPerWeek: number;
   maxDaysPerWeek: number;
   minRestHours: number;
-
   maxShiftHours: number;
   allowOvertime: boolean;
-
   enforceFairness: boolean;
   preferAvailability: boolean;
-
   notes: string | null;
 };
 
@@ -37,13 +35,10 @@ function withDefaults(r: Partial<RulesV1> | null | undefined): RulesV1 {
     maxHoursPerWeek: Number(r?.maxHoursPerWeek ?? 40),
     maxDaysPerWeek: Number(r?.maxDaysPerWeek ?? 6),
     minRestHours: Number(r?.minRestHours ?? 8),
-
     maxShiftHours: Number(r?.maxShiftHours ?? 10),
     allowOvertime: Boolean(r?.allowOvertime ?? false),
-
     enforceFairness: Boolean(r?.enforceFairness ?? true),
     preferAvailability: Boolean(r?.preferAvailability ?? true),
-
     notes: (r?.notes ?? null) as string | null,
   };
 }
@@ -54,24 +49,18 @@ function clampInt(v: any, min: number, max: number, fallback: number) {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
+
 export default function SchedulingRules() {
-  // teams list + selection
-  const [teams, setTeams] = useState<{ id: number; name: string }[] | null>(
-    null
-  );
+  const [teams, setTeams] = useState<{ id: number; name: string }[] | null>(null);
   const [teamsError, setTeamsError] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const [selectedTeamName, setSelectedTeamName] = useState<string | null>(null);
-
-  // rules state
   const [rules, setRules] = useState<RulesV1>(withDefaults(null));
   const [loadingRules, setLoadingRules] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const token =
-    typeof window !== 'undefined' ? localStorage.getItem('authToken') ?? '' : '';
+  const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') ?? '' : '';
 
-  // load teams on mount
   useEffect(() => {
     (async () => {
       try {
@@ -86,8 +75,6 @@ export default function SchedulingRules() {
         }
         const data = (await res.json()) as { id: number; name: string }[];
         setTeams(data);
-
-        // auto pick first team
         if (data.length > 0 && !selectedTeamId) {
           setSelectedTeamId(data[0].id);
           setSelectedTeamName(data[0].name);
@@ -100,7 +87,6 @@ export default function SchedulingRules() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // when selectedTeamId changes -> load rules
   useEffect(() => {
     if (!selectedTeamId) return;
     (async () => {
@@ -117,10 +103,7 @@ export default function SchedulingRules() {
         const payload = await res.json();
         setRules(withDefaults(payload?.rules));
       } catch (e: any) {
-        Toast.fire({
-          icon: 'error',
-          title: e?.message || 'Failed to load rules',
-        });
+        Toast.fire({ icon: 'error', title: e?.message || 'Failed to load rules' });
       } finally {
         setLoadingRules(false);
       }
@@ -158,7 +141,6 @@ export default function SchedulingRules() {
     }
     setSaving(true);
     try {
-      // client-side sanity
       const payload: RulesV1 = {
         ...rules,
         minHoursPerWeek: clampInt(rules.minHoursPerWeek, 0, 80, 0),
@@ -167,7 +149,6 @@ export default function SchedulingRules() {
         minRestHours: clampInt(rules.minRestHours, 0, 24, 8),
         maxShiftHours: clampInt(rules.maxShiftHours, 1, 24, 10),
       };
-
       if (payload.maxHoursPerWeek < payload.minHoursPerWeek) {
         payload.maxHoursPerWeek = payload.minHoursPerWeek;
       }
@@ -194,97 +175,115 @@ export default function SchedulingRules() {
   };
 
   const summary = useMemo(() => {
-    // just a quick status line
-    return `Min ${rules.minHoursPerWeek}h • Max ${rules.maxHoursPerWeek}h • ${rules.maxDaysPerWeek} days • Rest ${rules.minRestHours}h`;
+    return `${rules.minHoursPerWeek}h–${rules.maxHoursPerWeek}h · ${rules.maxDaysPerWeek} days · ${rules.minRestHours}h rest`;
   }, [rules]);
 
+  const ToggleRow = ({
+    label,
+    description,
+    checked,
+    onChange,
+  }: {
+    label: string;
+    description: string;
+    checked: boolean;
+    onChange: (v: boolean) => void;
+  }) => (
+    <label className="flex cursor-pointer items-center justify-between rounded-lg border border-gray-700 px-4 py-3 transition-colors hover:bg-gray-700/20">
+      <div>
+        <div className="text-sm font-medium text-gray-200">{label}</div>
+        <div className="text-xs text-gray-500">{description}</div>
+      </div>
+      <div
+        className={`relative h-5 w-9 rounded-full transition-colors ${checked ? 'bg-indigo-600' : 'bg-gray-700'}`}
+        onClick={() => onChange(!checked)}
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
+        />
+      </div>
+    </label>
+  );
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">📏 Scheduling Rules</h1>
-          <p className="text-sm text-neutral-600">
+          <h1 className="text-xl font-semibold text-gray-100">Scheduling Rules</h1>
+          <p className="mt-0.5 text-sm text-gray-500">
             {selectedTeamName ? (
-              <>
-                Team: <span className="font-medium">{selectedTeamName}</span> — {summary}
-              </>
+              <><span className="text-gray-300">{selectedTeamName}</span> — {summary}</>
             ) : (
               'Pick a team to edit its rules.'
             )}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex items-center gap-2">
           <Link
             href="/teams/new"
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
           >
-            + Create Team
+            <Plus className="h-3.5 w-3.5" />
+            New Team
           </Link>
           <button
             onClick={save}
             disabled={!selectedTeamId || saving || loadingRules}
-            className={`rounded-lg px-4 py-2 text-sm text-white ${
-              !selectedTeamId || saving || loadingRules
-                ? 'bg-blue-300'
-                : 'bg-blue-600 hover:bg-blue-700'
-            }`}
+            className="flex items-center gap-1.5 rounded-lg border border-indigo-600 bg-indigo-700 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
           >
-            {saving ? 'Saving…' : '💾 Save Rules'}
+            {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            {saving ? 'Saving…' : 'Save Rules'}
           </button>
         </div>
       </div>
 
       {/* Teams selector */}
-      <section className="rounded-2xl border p-5">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Teams</h2>
+      <div className="rounded-xl border border-gray-700 bg-gray-800/50">
+        <div className="flex items-center justify-between border-b border-gray-700 px-5 py-4">
+          <h2 className="text-sm font-semibold text-gray-100">Teams</h2>
           <button
             onClick={refreshTeams}
-            className="rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-neutral-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
           >
+            <RefreshCw className="h-3.5 w-3.5" />
             Refresh
           </button>
         </div>
-
-        <div className="mt-3">
+        <div className="p-4">
           {teamsError && (
-            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-800 bg-red-950/30 p-3 text-sm text-red-400">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
               {teamsError}
             </div>
           )}
-
-          <div className="relative mt-2 overflow-hidden rounded-xl border">
-            <div className="max-h-[220px] overflow-y-auto">
+          <div className="overflow-hidden rounded-lg border border-gray-700">
+            <div className="max-h-52 overflow-y-auto">
               {teams === null ? (
-                <div className="p-4 text-sm text-neutral-400">Loading teams…</div>
-              ) : teams.length === 0 ? (
-                <div className="p-4 text-sm text-neutral-600">
-                  No teams yet. Create one first.
+                <div className="flex items-center gap-2 p-4 text-sm text-gray-500">
+                  <RefreshCw className="h-4 w-4 animate-spin" /> Loading teams…
                 </div>
+              ) : teams.length === 0 ? (
+                <div className="p-4 text-sm text-gray-500">No teams yet. Create one first.</div>
               ) : (
-                <ul className="divide-y">
+                <ul className="divide-y divide-gray-700/50">
                   {teams.map((t) => {
                     const active = t.id === selectedTeamId;
                     return (
                       <li
                         key={t.id}
-                        className={`flex items-center justify-between p-3 ${
-                          active ? 'bg-blue-50 dark:bg-blue-950/30' : 'bg-white dark:bg-gray-900'
-                        }`}
+                        className={`flex items-center justify-between px-4 py-3 transition-colors ${active ? 'bg-indigo-900/20' : 'hover:bg-gray-700/30'}`}
                       >
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{t.name}</p>
-                          <p className="truncate text-xs text-neutral-500">ID: {t.id}</p>
+                          <p className="truncate text-sm font-medium text-gray-200">{t.name}</p>
+                          <p className="text-xs text-gray-500">ID: {t.id}</p>
                         </div>
                         {active ? (
-                          <span className="rounded-md bg-blue-600 px-2 py-1 text-xs text-white">
-                            Active
-                          </span>
+                          <span className="rounded-full border border-indigo-600 bg-indigo-700 px-2 py-0.5 text-xs text-white">Active</span>
                         ) : (
                           <button
                             onClick={() => handlePickTeam(t)}
-                            className="rounded-md border px-2 py-1 text-xs hover:bg-neutral-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                            className="rounded-lg border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
                           >
                             Use This
                           </button>
@@ -296,147 +295,106 @@ export default function SchedulingRules() {
               )}
             </div>
           </div>
-
           {loadingRules && (
-            <p className="mt-2 text-xs text-neutral-500">Loading rules…</p>
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
+              <RefreshCw className="h-3 w-3 animate-spin" /> Loading rules…
+            </div>
           )}
         </div>
-      </section>
+      </div>
 
-      {/* Rules UI */}
-      <div className="grid gap-6 md:grid-cols-2">
+      {/* Rules */}
+      <div className="grid gap-4 md:grid-cols-2">
         {/* Workload */}
-        <section className="rounded-2xl border p-5">
-          <h2 className="mb-2 text-lg font-semibold">📊 Workload Rules</h2>
-
-          <div className="space-y-3">
-            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
-              <div>
-                <div className="text-sm font-medium">Min hours per week</div>
-                <div className="text-xs text-neutral-500">Target minimum hours per person.</div>
-              </div>
-              <input
-                type="number"
-                className="rounded-lg border p-2 text-sm"
-                value={rules.minHoursPerWeek}
-                onChange={(e) => setNum('minHoursPerWeek', e.target.value, 0, 80)}
-              />
-            </div>
-
-            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
-              <div>
-                <div className="text-sm font-medium">Max hours per week</div>
-                <div className="text-xs text-neutral-500">Hard cap unless overtime is allowed.</div>
-              </div>
-              <input
-                type="number"
-                className="rounded-lg border p-2 text-sm"
-                value={rules.maxHoursPerWeek}
-                onChange={(e) => setNum('maxHoursPerWeek', e.target.value, 0, 80)}
-              />
-            </div>
-
-            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
-              <div>
-                <div className="text-sm font-medium">Max days per week</div>
-                <div className="text-xs text-neutral-500">Limit how many days someone can work.</div>
-              </div>
-              <input
-                type="number"
-                className="rounded-lg border p-2 text-sm"
-                value={rules.maxDaysPerWeek}
-                onChange={(e) => setNum('maxDaysPerWeek', e.target.value, 1, 7)}
-              />
-            </div>
-
-            <label className="flex items-center justify-between rounded-xl border p-3">
-              <div>
-                <div className="text-sm font-medium">Balance workload</div>
-                <div className="text-xs text-neutral-500">Try to distribute hours fairly.</div>
-              </div>
-              <input
-                type="checkbox"
-                checked={rules.enforceFairness}
-                onChange={(e) => setRules((p) => ({ ...p, enforceFairness: e.target.checked }))}
-              />
-            </label>
+        <div className="rounded-xl border border-gray-700 bg-gray-800/50">
+          <div className="flex items-center gap-2 border-b border-gray-700 px-5 py-4">
+            <Settings className="h-4 w-4 text-indigo-400" />
+            <h2 className="text-sm font-semibold text-gray-100">Workload Rules</h2>
           </div>
-        </section>
+          <div className="space-y-3 p-5">
+            {[
+              { key: 'minHoursPerWeek' as const, label: 'Min hours / week', desc: 'Target minimum hours per person.', min: 0, max: 80 },
+              { key: 'maxHoursPerWeek' as const, label: 'Max hours / week', desc: 'Hard cap unless overtime is allowed.', min: 0, max: 80 },
+              { key: 'maxDaysPerWeek' as const, label: 'Max days / week', desc: 'Limit how many days someone can work.', min: 1, max: 7 },
+            ].map((f) => (
+              <div key={f.key} className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-200">{f.label}</div>
+                  <div className="text-xs text-gray-500">{f.desc}</div>
+                </div>
+                <input
+                  type="number"
+                  className="w-24 shrink-0 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  value={rules[f.key] as number}
+                  onChange={(e) => setNum(f.key, e.target.value, f.min, f.max)}
+                />
+              </div>
+            ))}
+            <ToggleRow
+              label="Balance workload"
+              description="Try to distribute hours fairly."
+              checked={rules.enforceFairness}
+              onChange={(v) => setRules((p) => ({ ...p, enforceFairness: v }))}
+            />
+          </div>
+        </div>
 
         {/* Time */}
-        <section className="rounded-2xl border p-5">
-          <h2 className="mb-2 text-lg font-semibold">⏰ Time Rules</h2>
-
-          <div className="space-y-3">
-            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
-              <div>
-                <div className="text-sm font-medium">Min rest hours</div>
-                <div className="text-xs text-neutral-500">Minimum time between shifts.</div>
-              </div>
-              <input
-                type="number"
-                className="rounded-lg border p-2 text-sm"
-                value={rules.minRestHours}
-                onChange={(e) => setNum('minRestHours', e.target.value, 0, 24)}
-              />
-            </div>
-
-            <div className="grid grid-cols-[1fr,120px] items-center gap-3">
-              <div>
-                <div className="text-sm font-medium">Max shift hours</div>
-                <div className="text-xs text-neutral-500">Shift length limit.</div>
-              </div>
-              <input
-                type="number"
-                className="rounded-lg border p-2 text-sm"
-                value={rules.maxShiftHours}
-                onChange={(e) => setNum('maxShiftHours', e.target.value, 1, 24)}
-              />
-            </div>
-
-            <label className="flex items-center justify-between rounded-xl border p-3">
-              <div>
-                <div className="text-sm font-medium">Prefer availability</div>
-                <div className="text-xs text-neutral-500">Schedule inside availability first.</div>
-              </div>
-              <input
-                type="checkbox"
-                checked={rules.preferAvailability}
-                onChange={(e) =>
-                  setRules((p) => ({ ...p, preferAvailability: e.target.checked }))
-                }
-              />
-            </label>
-
-            <label className="flex items-center justify-between rounded-xl border p-3">
-              <div>
-                <div className="text-sm font-medium">Allow overtime</div>
-                <div className="text-xs text-neutral-500">Permit exceeding max hours/week if needed.</div>
-              </div>
-              <input
-                type="checkbox"
-                checked={rules.allowOvertime}
-                onChange={(e) => setRules((p) => ({ ...p, allowOvertime: e.target.checked }))}
-              />
-            </label>
+        <div className="rounded-xl border border-gray-700 bg-gray-800/50">
+          <div className="flex items-center gap-2 border-b border-gray-700 px-5 py-4">
+            <Clock className="h-4 w-4 text-indigo-400" />
+            <h2 className="text-sm font-semibold text-gray-100">Time Rules</h2>
           </div>
-        </section>
+          <div className="space-y-3 p-5">
+            {[
+              { key: 'minRestHours' as const, label: 'Min rest hours', desc: 'Minimum time between shifts.', min: 0, max: 24 },
+              { key: 'maxShiftHours' as const, label: 'Max shift hours', desc: 'Shift length limit.', min: 1, max: 24 },
+            ].map((f) => (
+              <div key={f.key} className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-200">{f.label}</div>
+                  <div className="text-xs text-gray-500">{f.desc}</div>
+                </div>
+                <input
+                  type="number"
+                  className="w-24 shrink-0 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  value={rules[f.key] as number}
+                  onChange={(e) => setNum(f.key, e.target.value, f.min, f.max)}
+                />
+              </div>
+            ))}
+            <ToggleRow
+              label="Prefer availability"
+              description="Schedule inside availability windows first."
+              checked={rules.preferAvailability}
+              onChange={(v) => setRules((p) => ({ ...p, preferAvailability: v }))}
+            />
+            <ToggleRow
+              label="Allow overtime"
+              description="Permit exceeding max hours/week if needed."
+              checked={rules.allowOvertime}
+              onChange={(v) => setRules((p) => ({ ...p, allowOvertime: v }))}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Notes */}
-      <section className="rounded-2xl border p-5">
-        <h2 className="mb-2 text-lg font-semibold">📝 Notes</h2>
-        <p className="mb-3 text-sm text-neutral-600">
-          Optional notes for managers (not used by the optimizer unless you decide to later).
-        </p>
-        <textarea
-          className="w-full rounded-xl border p-3 text-sm"
-          rows={4}
-          value={rules.notes ?? ''}
-          onChange={(e) => setRules((p) => ({ ...p, notes: e.target.value }))}
-          placeholder="Example: Avoid scheduling new hires for closing on Fridays."
-        />
-      </section>
+      <div className="rounded-xl border border-gray-700 bg-gray-800/50">
+        <div className="border-b border-gray-700 px-5 py-4">
+          <h2 className="text-sm font-semibold text-gray-100">Notes</h2>
+          <p className="mt-0.5 text-xs text-gray-500">Optional notes for managers (not used by the optimizer).</p>
+        </div>
+        <div className="p-5">
+          <textarea
+            className="w-full rounded-lg border border-gray-700 bg-gray-800 p-3 text-sm text-gray-100 placeholder:text-gray-600 focus:border-indigo-500 focus:outline-none transition-colors"
+            rows={4}
+            value={rules.notes ?? ''}
+            onChange={(e) => setRules((p) => ({ ...p, notes: e.target.value }))}
+            placeholder="Example: Avoid scheduling new hires for closing on Fridays."
+          />
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Zap, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 
 type Team = { id: number; name: string };
-type WdEnum = 'SUN'|'MON'|'TUE'|'WED'|'THU'|'FRI'|'SAT';
+type WdEnum = 'SUN' | 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT';
 
 type GeneratedSchedule = {
   teamId: number;
@@ -32,22 +33,21 @@ type GeneratedSchedule = {
 
 function todayYMD() {
   const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth()+1).padStart(2,'0');
-  const day = String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+
+const inputClass =
+  'w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-indigo-500 transition-colors';
 
 export default function GenerateSchedulePage() {
   const [teams, setTeams] = useState<Team[] | null>(null);
   const [teamId, setTeamId] = useState<number | null>(null);
-
   const [startDate, setStartDate] = useState(todayYMD());
   const [endDate, setEndDate] = useState(todayYMD());
-
   const [busy, setBusy] = useState(false);
   const [schedule, setSchedule] = useState<GeneratedSchedule | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notesOpen, setNotesOpen] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('authToken') ?? '';
@@ -69,9 +69,10 @@ export default function GenerateSchedulePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const canGenerate = useMemo(() => {
-    return Boolean(teamId) && Boolean(startDate) && Boolean(endDate) && !busy;
-  }, [teamId, startDate, endDate, busy]);
+  const canGenerate = useMemo(
+    () => Boolean(teamId) && Boolean(startDate) && Boolean(endDate) && !busy,
+    [teamId, startDate, endDate, busy]
+  );
 
   const generate = async () => {
     if (!teamId) return;
@@ -94,10 +95,8 @@ export default function GenerateSchedulePage() {
           optimization: 'BALANCED_WORKLOAD',
         }),
       });
-
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload?.error ?? 'Failed to generate schedule');
-
       setSchedule(payload.schedule);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to generate schedule');
@@ -106,125 +105,139 @@ export default function GenerateSchedulePage() {
     }
   };
 
+  const thClass = 'px-3 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-gray-500';
+
   return (
-    <main className="mx-auto max-w-6xl p-6 space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">🧠 Generate Schedule</h1>
-          <p className="text-sm text-neutral-600">
-            v1 generator (Greedy + scoring). Blackout irregular events.
-          </p>
-        </div>
-      </header>
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-xl font-semibold text-gray-100">Generate Schedule</h1>
+        <p className="mt-0.5 text-sm text-gray-500">Greedy + scoring algorithm. Blackouts irregular events.</p>
+      </div>
 
       {/* Controls */}
-      <section className="rounded-2xl border p-5 space-y-4">
+      <div className="rounded-xl border border-gray-700 bg-gray-800/50 p-5">
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-800 bg-red-950/30 p-3 text-sm text-red-400">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
             {error}
           </div>
         )}
 
         <div className="grid gap-4 md:grid-cols-3">
           <div>
-            <label className="text-sm text-neutral-600">Team</label>
+            <label className="mb-1.5 block text-xs font-medium text-gray-400">Team</label>
             <select
-              className="mt-1 w-full rounded-lg border p-2"
+              className={inputClass}
               value={teamId ?? ''}
               onChange={(e) => setTeamId(Number(e.target.value))}
             >
               {teams === null && <option value="">Loading…</option>}
               {teams?.length === 0 && <option value="">No teams</option>}
               {teams?.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} (#{t.id})
-                </option>
+                <option key={t.id} value={t.id}>{t.name} (#{t.id})</option>
               ))}
             </select>
           </div>
-
           <div>
-            <label className="text-sm text-neutral-600">Start date</label>
+            <label className="mb-1.5 block text-xs font-medium text-gray-400">Start date</label>
             <input
               type="date"
-              className="mt-1 w-full rounded-lg border p-2"
+              className={inputClass}
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
             />
           </div>
-
           <div>
-            <label className="text-sm text-neutral-600">End date</label>
+            <label className="mb-1.5 block text-xs font-medium text-gray-400">End date</label>
             <input
               type="date"
-              className="mt-1 w-full rounded-lg border p-2"
+              className={inputClass}
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
             />
           </div>
         </div>
 
-        <button
-          disabled={!canGenerate}
-          onClick={generate}
-          className={`rounded-lg px-4 py-2 text-sm text-white ${
-            canGenerate ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-300'
-          }`}
-        >
-          {busy ? 'Generating…' : 'Generate'}
-        </button>
-      </section>
+        <div className="mt-4">
+          <button
+            disabled={!canGenerate}
+            onClick={generate}
+            className="flex items-center gap-2 rounded-lg border border-indigo-600 bg-indigo-700 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
+          >
+            {busy ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <Zap className="h-4 w-4" />
+            )}
+            {busy ? 'Generating…' : 'Generate Schedule'}
+          </button>
+        </div>
+      </div>
 
       {/* Result */}
       {schedule && (
-        <section className="rounded-2xl border p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="rounded-xl border border-gray-700 bg-gray-800/50">
+          {/* Result header */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-700 px-5 py-4">
             <div>
-              <h2 className="text-lg font-semibold">Result</h2>
-              <p className="text-sm text-neutral-600">
-                {schedule.startDate} → {schedule.endDate} • Unfilled slots:{' '}
-                <b>{schedule.stats.totalUnfilledSlots}</b>
+              <h2 className="text-sm font-semibold text-gray-100">Result</h2>
+              <p className="mt-0.5 text-xs text-gray-500">
+                {schedule.startDate} → {schedule.endDate} ·{' '}
+                <span className={schedule.stats.totalUnfilledSlots > 0 ? 'text-red-400' : 'text-green-400'}>
+                  {schedule.stats.totalUnfilledSlots} unfilled slots
+                </span>
               </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {[
+                { label: 'Total shifts', value: schedule.shifts.length },
+                { label: 'Unfilled', value: schedule.stats.totalUnfilledSlots, red: schedule.stats.totalUnfilledSlots > 0 },
+              ].map((stat) => (
+                <div key={stat.label} className="rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-2 text-center">
+                  <div className={`text-lg font-bold ${stat.red ? 'text-red-400' : 'text-gray-100'}`}>{stat.value}</div>
+                  <div className="text-xs text-gray-500">{stat.label}</div>
+                </div>
+              ))}
             </div>
           </div>
 
           {/* Table */}
-          <div className="rounded-lg border overflow-hidden">
-            <div className="max-h-[520px] overflow-auto">
+          <div className="overflow-hidden">
+            <div className="max-h-[500px] overflow-auto">
               <table className="min-w-[900px] w-full text-left text-sm">
-                <thead className="sticky top-0 bg-gray-50 z-10">
-                  <tr className="text-xs uppercase text-gray-600">
-                    <th className="px-3 py-2">Date</th>
-                    <th className="px-3 py-2">Shift</th>
-                    <th className="px-3 py-2">Job</th>
-                    <th className="px-3 py-2">Time</th>
-                    <th className="px-3 py-2">Required</th>
-                    <th className="px-3 py-2">Assigned</th>
-                    <th className="px-3 py-2">Unfilled</th>
+                <thead className="sticky top-0 bg-gray-800/80">
+                  <tr>
+                    {['Date', 'Shift', 'Job', 'Time', 'Required', 'Assigned', 'Unfilled'].map((h) => (
+                      <th key={h} className={thClass}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {schedule.shifts.map((s) => (
-                    <tr key={s.shiftId} className="border-t">
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {s.date} ({s.weekday})
+                  {schedule.shifts.map((s, i) => (
+                    <tr
+                      key={s.shiftId}
+                      className={`border-t border-gray-700/50 ${i % 2 === 0 ? 'bg-gray-900/20' : ''}`}
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-300">
+                        {s.date} <span className="text-gray-600">({s.weekday})</span>
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap">{s.shiftName}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{s.jobType ?? '—'}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-300">{s.shiftName}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-400">{s.jobType ?? '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap font-mono text-xs text-gray-300">
                         {s.startHHMM}–{s.endHHMM}
                       </td>
-                      <td className="px-3 py-2">{s.required}</td>
-                      <td className="px-3 py-2">
-                        {s.assigned.length
-                          ? s.assigned.map((a) => a.name).join(', ')
-                          : '—'}
+                      <td className="px-3 py-2 text-xs text-gray-400">{s.required}</td>
+                      <td className="px-3 py-2 text-xs text-gray-300">
+                        {s.assigned.length ? s.assigned.map((a) => a.name).join(', ') : '—'}
                       </td>
                       <td className="px-3 py-2">
                         {s.unfilled > 0 ? (
-                          <span className="text-red-600 font-medium">{s.unfilled}</span>
+                          <span className="rounded-full bg-red-900/40 px-2 py-0.5 text-xs font-medium text-red-400">
+                            {s.unfilled}
+                          </span>
                         ) : (
-                          '0'
+                          <span className="text-xs text-green-500">0</span>
                         )}
                       </td>
                     </tr>
@@ -234,22 +247,33 @@ export default function GenerateSchedulePage() {
             </div>
           </div>
 
-          {/* Notes */}
-          <details className="rounded-lg border p-3">
-            <summary className="cursor-pointer text-sm font-medium">
-              Notes / Warnings ({schedule.notes.length})
-            </summary>
-            <ul className="mt-2 list-disc pl-5 text-sm text-neutral-700">
-              {schedule.notes.slice(0, 200).map((n, i) => (
-                <li key={i}>{n}</li>
-              ))}
-            </ul>
-            {schedule.notes.length > 200 && (
-              <p className="mt-2 text-xs text-neutral-500">Showing first 200 notes…</p>
+          {/* Notes collapsible */}
+          <div className="border-t border-gray-700">
+            <button
+              className="flex w-full items-center justify-between px-5 py-3 text-xs font-medium text-gray-400 transition-colors hover:text-gray-200"
+              onClick={() => setNotesOpen((v) => !v)}
+            >
+              <span>Notes / Warnings ({schedule.notes.length})</span>
+              {notesOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            {notesOpen && (
+              <div className="px-5 pb-5">
+                <ul className="space-y-1 text-xs text-gray-500">
+                  {schedule.notes.slice(0, 200).map((n, i) => (
+                    <li key={i} className="flex gap-1.5">
+                      <span className="mt-0.5 shrink-0 text-gray-700">·</span>
+                      {n}
+                    </li>
+                  ))}
+                </ul>
+                {schedule.notes.length > 200 && (
+                  <p className="mt-2 text-xs text-gray-600">Showing first 200 notes…</p>
+                )}
+              </div>
             )}
-          </details>
-        </section>
+          </div>
+        </div>
       )}
-    </main>
+    </div>
   );
 }

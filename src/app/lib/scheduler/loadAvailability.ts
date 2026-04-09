@@ -92,10 +92,10 @@ export function loadAvailability(): EmployeeAvailability[] {
       position: row["Position"]?.trim(),
       ranking: Number(row["Ranking"]) || 0,
       leadership: row["Leadership"]?.trim() || "",
-      minHours: Number(row["Min hours per week"]) || 0,
-      maxHours: Number(row["Max hours per week"]) || 0,
-      minDays: Number(row["Min Days per week"]) || 0,
-      maxDays: Number(row["Max Days per week"]) || 0,
+      minHoursWeek: Number(row["Min hours per week"]) || 0,
+      maxHoursWeek: Number(row["Max hours per week"]) || 0,
+      minDaysWeek: Number(row["Min Days per week"]) || 0,
+      maxDaysWeek: Number(row["Max Days per week"]) || 0,
       availability,
     };
   });
