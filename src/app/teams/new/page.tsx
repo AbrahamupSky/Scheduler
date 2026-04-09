@@ -81,7 +81,12 @@ async function apiCreateTeam(name: string) {
 async function apiSaveAvailability(
   teamId: number,
   payload: {
-    members: { name: string; job?: string | null; position?: string | null }[];
+    members: {
+      name: string;
+      job?: string | null;
+      position?: string | null;
+      leadership?: string | null;
+    }[];
     windows: {
       memberName: string;
       weekday: 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN';
@@ -194,6 +199,7 @@ export default function CreateTeamPage() {
       name: string;
       job?: string | null;
       position?: string | null;
+      leadership?: string | null;
     }[] = [];
     const windows: {
       memberName: string;
@@ -208,8 +214,9 @@ export default function CreateTeamPage() {
 
       const job = String(row['Position'] ?? row['Job'] ?? '').trim() || null;
       const position =
-        String(row['Leadership'] ?? row['PositionTitle'] ?? '').trim() || null;
-      members.push({ name, job, position });
+        String(row['PositionTitle'] ?? row['Position'] ?? '').trim() || null;
+      const leadership = String(row['Leadership'] ?? '').trim() || null;
+      members.push({ name, job, position, leadership });
 
       // For each weekday, read "<Day> Start" and "<Day> End"
       (

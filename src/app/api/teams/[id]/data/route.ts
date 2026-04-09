@@ -40,7 +40,12 @@ function hhmm(s: string | null | undefined) {
 
 /** Build CSV-like availability rows from members/windows (for your preview table) */
 function buildAvailabilityRowsFromDb(
-  members: Array<{ name: string; job: string | null; position: string | null }>,
+  members: Array<{
+    name: string;
+    job: string | null;
+    position: string | null;
+    leadership: string | null;
+  }>,
   windows: Array<{
     memberName: string;
     weekday: WdEnum;
@@ -54,6 +59,7 @@ function buildAvailabilityRowsFromDb(
       Name: m.name,
       Job: m.job ?? '',
       Position: m.position ?? '',
+      Leadership: m.leadership ?? '',
     };
     [
       'Monday',
@@ -127,6 +133,7 @@ export async function GET(
             name: true,
             job: true,
             position: true,
+            leadership: true,
             availability: {
               select: { dayOfWeek: true, startTime: true, endTime: true },
               orderBy: [{ dayOfWeek: 'asc' }, { id: 'asc' }],
@@ -159,6 +166,7 @@ export async function GET(
       name: m.name,
       job: m.job,
       position: m.position,
+      leadership: m.leadership,
     }));
 
     const windows = team.members.flatMap((m) =>

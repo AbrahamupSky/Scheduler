@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { loadShiftTemplates } from "@/app/lib/scheduler/loadShiftTemplates";
 import { loadAvailability } from "@/app/lib/scheduler/loadAvailability";
+import {
+  canLeadLane,
+  isShiftLeaderName,
+  laneFromJobType,
+} from "@/app/lib/scheduler/leadershipUtils";
 
 /* -------------------------- auth helper (Bearer) -------------------------- */
 async function getUserFromAuth(req: NextRequest) {
@@ -16,6 +21,16 @@ async function getUserFromAuth(req: NextRequest) {
   });
 
   return session?.user ?? null;
+}
+
+function isGeneratedScheduleLike(data: any): data is {
+  shifts: Array<{
+    shiftName?: string | null;
+    jobType?: string | null;
+    assigned?: Array<{ memberId?: number | null }>;
+  }>;
+} {
+  return !!data && Array.isArray(data.shifts);
 }
 
 /* ----------------------------------- GET ---------------------------------- */
@@ -105,10 +120,41 @@ export async function PATCH(
     // Ensure schedule belongs to this user
     const existing = await prisma.savedSchedule.findFirst({
       where: { id: scheduleId, team: { ownerId: user.id } },
-      select: { id: true },
+      select: { id: true, teamId: true },
     });
 
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    if (isGeneratedScheduleLike(data)) {
+      const members = await prisma.teamMember.findMany({
+        where: { teamId: existing.teamId },
+        select: { id: true, leadership: true },
+      });
+      const leadershipByMemberId = new Map(
+        members.map((m) => [m.id, m.leadership ?? null]),
+      );
+
+      for (const shift of data.shifts) {
+        if (!isShiftLeaderName(shift?.shiftName)) continue;
+        const lane = laneFromJobType(shift?.jobType ?? null);
+
+        for (const assigned of shift?.assigned ?? []) {
+          const memberId = Number(assigned?.memberId);
+          if (!Number.isFinite(memberId)) continue;
+
+          const leadership = leadershipByMemberId.get(memberId) ?? null;
+          if (!canLeadLane(leadership, lane)) {
+            return NextResponse.json(
+              {
+                error:
+                  "Shift Leader assignments can only include BOH TL/Dir or FOH TL/Dir (or BOH FOH Dir for both).",
+              },
+              { status: 400 },
+            );
+          }
+        }
+      }
+    }
 
     const updated = await prisma.savedSchedule.update({
       where: { id: scheduleId },

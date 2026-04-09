@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/app/lib/prisma';
+import {
+  canLeadLane,
+  isShiftLeaderName,
+  laneFromJobType,
+} from '@/app/lib/scheduler/leadershipUtils';
 
 /* -------------------------- auth helper (Bearer) -------------------------- */
 async function getUserFromAuth(req: NextRequest) {
@@ -177,6 +182,7 @@ type MemberDb = {
   name: string;
   job: string | null;
   position: string | null;
+  leadership: string | null;
   availability: { dayOfWeek: number; startTime: string; endTime: string }[];
   role: { id: number; name: string; caps: { code: CapCode }[] } | null;
 };
@@ -369,6 +375,11 @@ function memberHasCapability(member: MemberDb, cap: CapCode) {
   return caps.some((c) => c.code === cap);
 }
 
+function memberCanLeadShift(member: MemberDb, shift: ShiftInstance) {
+  if (!isShiftLeaderName(shift.shiftName)) return true;
+  return canLeadLane(member.leadership, laneFromJobType(shift.jobType));
+}
+
 /* ----------------------------- Greedy fill (v1) ---------------------------- */
 export async function POST(
   req: NextRequest,
@@ -473,6 +484,7 @@ export async function POST(
 
       // ✅ capability check (THIS fixes “wrong job”)
       if (!memberHasCapability(member, shift.jobType)) return false;
+      if (!memberCanLeadShift(member, shift)) return false;
 
       if (strictAvailability) {
         if (!availabilityCoversShiftStrict(member, shift)) return false;
@@ -552,6 +564,12 @@ export async function POST(
         if (!memberHasCapability(m, shift.jobType)) {
           scheduleNotes.push(
             `🚫 Blocked: ${m.name} lacks capability "${shift.jobType}" for ${shift.shiftName} on ${shift.date}`,
+          );
+          continue;
+        }
+        if (!memberCanLeadShift(m, shift)) {
+          scheduleNotes.push(
+            `🚫 Blocked: ${m.name} lacks required leadership for ${shift.shiftName} (${shift.jobType}) on ${shift.date}`,
           );
           continue;
         }

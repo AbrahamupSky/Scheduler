@@ -2,6 +2,11 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import {
+  canLeadLane,
+  isShiftLeaderName,
+  laneFromJobType,
+} from '@/app/lib/scheduler/leadershipUtils';
 
 type Team = { id: number; name: string };
 
@@ -14,7 +19,7 @@ type ScheduleMeta = {
   createdAt: string;
 };
 
-type TeamMemberOption = { id: number; name: string };
+type TeamMemberOption = { id: number; name: string; leadership?: string | null };
 
 type GeneratedSchedule = {
   shifts: Array<{
@@ -89,6 +94,14 @@ function removeAssigned(
     }),
   };
   return recomputeUnfilled(next);
+}
+
+function memberCanBeAddedToShift(
+  member: TeamMemberOption,
+  shift: GeneratedSchedule['shifts'][number],
+) {
+  if (!isShiftLeaderName(shift.shiftName)) return true;
+  return canLeadLane(member.leadership, laneFromJobType(shift.jobType));
 }
 
 export default function SchedulesPage() {
@@ -230,6 +243,8 @@ export default function SchedulesPage() {
             .map((m: any) => ({
               id: Number(m.id),
               name: String(m.name ?? '').trim(),
+              leadership:
+                m?.leadership == null ? null : String(m.leadership).trim(),
             }))
             .filter((m: TeamMemberOption) => Number.isFinite(m.id) && m.name)
         : [];
@@ -564,7 +579,12 @@ export default function SchedulesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r) => (
+                      {rows.map((r) => {
+                        const eligibleMembers = teamMembers.filter((m) =>
+                          memberCanBeAddedToShift(m, r),
+                        );
+
+                        return (
                         <tr key={r.shiftId} className="border-t align-top">
                           <td className="px-3 py-2 whitespace-nowrap">
                             {r.date} ({r.weekday})
@@ -629,7 +649,7 @@ export default function SchedulesPage() {
                                   defaultValue=""
                                   onChange={(e) => {
                                     const id = Number(e.target.value);
-                                    const m = teamMembers.find(
+                                    const m = eligibleMembers.find(
                                       (x) => x.id === id,
                                     );
                                     if (!m) return;
@@ -639,15 +659,15 @@ export default function SchedulesPage() {
                                     );
                                     e.currentTarget.value = '';
                                   }}
-                                  disabled={teamMembers.length === 0}
+                                  disabled={eligibleMembers.length === 0}
                                   title={
-                                    teamMembers.length === 0
-                                      ? 'No team members loaded (check /api/teams/[id]/data returns member id)'
+                                    eligibleMembers.length === 0
+                                      ? 'No eligible members for this shift'
                                       : undefined
                                   }
                                 >
                                   <option value="">+ Add team member…</option>
-                                  {teamMembers.map((m) => (
+                                  {eligibleMembers.map((m) => (
                                     <option key={m.id} value={m.id}>
                                       {m.name}
                                     </option>
@@ -671,7 +691,8 @@ export default function SchedulesPage() {
                             )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {rows.length === 0 && (
                         <tr>
                           <td
