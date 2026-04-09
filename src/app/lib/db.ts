@@ -9,7 +9,7 @@ export async function createUser(
   hashedPassword: string
 ) {
   return prisma.user.create({
-    data: { username, email, password: hashedPassword },
+    data: { username, email, passwordHash: hashedPassword },
   });
 }
 
@@ -42,7 +42,7 @@ export async function upsertTeamWithMembers(
   }>
 ) {
   const team = await prisma.team.upsert({
-    where: { name_ownerId: { name: teamName, ownerId } },
+    where: { ownerId_name: { name: teamName, ownerId } },
     create: { name: teamName, ownerId },
     update: {},
   });
@@ -80,13 +80,16 @@ export async function setMemberAvailability(
   await prisma.availabilityWindow.deleteMany({
     where: { memberId: member.id },
   });
+  const weekdayToInt: Record<string, number> = { SUN: 0, MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6 };
   await prisma.availabilityWindow.createMany({
-    data: windows.map((w) => ({
-      memberId: member.id,
-      weekday: w.weekday,
-      startHHMM: w.startHHMM ?? null,
-      endHHMM: w.endHHMM ?? null,
-    })),
+    data: windows
+      .filter((w) => w.startHHMM && w.endHHMM)
+      .map((w) => ({
+        memberId: member.id,
+        dayOfWeek: weekdayToInt[w.weekday] ?? 0,
+        startTime: w.startHHMM!,
+        endTime: w.endHHMM!,
+      })) as any,
   });
 }
 
@@ -103,7 +106,7 @@ export async function replaceShiftTemplates(
 ) {
   await prisma.shiftTemplate.deleteMany({ where: { teamId } });
   await prisma.shiftTemplate.createMany({
-    data: templates.map((t) => ({ ...t, teamId })),
+    data: templates.map((t) => ({ ...t, teamId })) as any,
   });
 }
 
@@ -134,7 +137,7 @@ export async function addIrregularEvents(
       groupType: e.groupType ?? null,
       groupIdentifier: e.groupIdentifier ?? null,
       ignoreRules: e.ignoreRules ?? true,
-    })),
+    })) as any,
   });
 }
 
@@ -166,9 +169,8 @@ export async function saveSchedule(
       startDate: new Date(args.startDateISO),
       endDate: new Date(args.endDateISO),
       optimization: args.optimization,
-      allowOvertime: args.allowOvertime,
       data: args.data,
-    },
+    } as any,
   });
 }
 
@@ -195,7 +197,7 @@ export async function listSchedules(teamId: number) {
 export async function setSchedulingRules(teamId: number, rulesJson: any) {
   return prisma.schedulingRules.upsert({
     where: { teamId },
-    create: { teamId, rules: rulesJson },
-    update: { rules: rulesJson },
+    create: { teamId, rules: rulesJson } as any,
+    update: { rules: rulesJson } as any,
   });
 }

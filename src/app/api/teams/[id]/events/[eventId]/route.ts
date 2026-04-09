@@ -25,14 +25,15 @@ function validateHHMM(s: any) {
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string; eventId: string } }
+  { params }: { params: Promise<{ id: string; eventId: string }> }
 ) {
   try {
     const user = await getUserFromAuth(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = parseIntId(params.id);
-    const eventId = parseIntId(params.eventId);
+    const { id, eventId: eventIdStr } = await params;
+    const teamId = parseIntId(id);
+    const eventId = parseIntId(eventIdStr);
     if (!teamId || !eventId)
       return NextResponse.json({ error: 'bad id' }, { status: 400 });
 
@@ -63,7 +64,7 @@ export async function PUT(
 
     const updated = await prisma.irregularEvent.update({
       where: { id: eventId },
-      data: { title, date, startTime, endTime, jobType },
+      data: { title, date, startTime, endTime, jobType: jobType as any },
     });
 
     // safety: ensure event belongs to team
@@ -80,14 +81,15 @@ export async function PUT(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string; eventId: string } }
+  { params }: { params: Promise<{ id: string; eventId: string }> }
 ) {
   try {
     const user = await getUserFromAuth(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = parseIntId(params.id);
-    const eventId = parseIntId(params.eventId);
+    const { id, eventId: eventIdStr } = await params;
+    const teamId = parseIntId(id);
+    const eventId = parseIntId(eventIdStr);
     if (!teamId || !eventId)
       return NextResponse.json({ error: 'bad id' }, { status: 400 });
 

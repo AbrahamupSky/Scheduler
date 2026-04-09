@@ -116,7 +116,6 @@ export async function GET(
         name: true,
         job: true,
         position: true,
-        ranking: true,
         leadership: true,
         minHoursWeek: true,
         maxHoursWeek: true,
@@ -252,10 +251,10 @@ export async function POST(
 
               ranking: e.ranking ?? null,
               leadership: e.leadership ?? null,
-              minHoursWeek: e.minHours ?? null,
-              maxHoursWeek: e.maxHours ?? null,
-              minDaysWeek: e.minDays ?? null,
-              maxDaysWeek: e.maxDays ?? null,
+              minHoursWeek: e.minHoursWeek ?? null,
+              maxHoursWeek: e.maxHoursWeek ?? null,
+              minDaysWeek: e.minDaysWeek ?? null,
+              maxDaysWeek: e.maxDaysWeek ?? null,
               notes: (e as any).notes ?? null,
 
               // only update roleId if you want it to follow CSV:
@@ -269,10 +268,10 @@ export async function POST(
 
               ranking: e.ranking ?? null,
               leadership: e.leadership ?? null,
-              minHoursWeek: e.minHours ?? null,
-              maxHoursWeek: e.maxHours ?? null,
-              minDaysWeek: e.minDays ?? null,
-              maxDaysWeek: e.maxDays ?? null,
+              minHoursWeek: e.minHoursWeek ?? null,
+              maxHoursWeek: e.maxHoursWeek ?? null,
+              minDaysWeek: e.minDaysWeek ?? null,
+              maxDaysWeek: e.maxDaysWeek ?? null,
               notes: (e as any).notes ?? null,
 
               roleId,

@@ -15,22 +15,23 @@ async function getUserFromAuth(req: NextRequest) {
   return session?.user ?? null;
 }
 
-function parseTeamId(params: { id: string }) {
-  const teamId = Number(params.id);
+function parseTeamId(id: string) {
+  const teamId = Number(id);
   if (!Number.isFinite(teamId)) return null;
   return teamId;
 }
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getUserFromAuth(req);
     if (!user)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = parseTeamId(params);
+    const { id } = await params;
+    const teamId = parseTeamId(id);
     if (!teamId)
       return NextResponse.json({ error: 'bad team id' }, { status: 400 });
 
@@ -54,14 +55,15 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getUserFromAuth(req);
     if (!user)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = parseTeamId(params);
+    const { id } = await params;
+    const teamId = parseTeamId(id);
     if (!teamId)
       return NextResponse.json({ error: 'bad team id' }, { status: 400 });
 

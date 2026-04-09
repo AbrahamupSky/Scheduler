@@ -148,8 +148,7 @@ export async function POST(
     });
 
     await prisma.roleCapability.createMany({
-      data: caps.map((code) => ({ roleId: created.id, code })),
-      skipDuplicates: true,
+      data: caps.map((code) => ({ roleId: created.id, code })) as any,
     });
 
     return NextResponse.json({

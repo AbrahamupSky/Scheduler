@@ -419,7 +419,7 @@ export async function POST(
       return NextResponse.json({ error: 'Team not found' }, { status: 404 });
 
     const dbRules: Rule[] | null = null;
-    const rulesMap = rulesToMap(dbRules?.length ? dbRules : defaultRulesV1());
+    const rulesMap = rulesToMap(defaultRulesV1());
 
     const strictAvailability = ruleBool(
       rulesMap,

@@ -15,8 +15,8 @@ async function getUserFromAuth(req: NextRequest) {
   return session?.user ?? null;
 }
 
-function parseTeamId(params: { id: string }) {
-  const teamId = Number(params.id);
+function parseTeamId(id: string) {
+  const teamId = Number(id);
   return Number.isFinite(teamId) ? teamId : null;
 }
 
@@ -26,13 +26,14 @@ function validateHHMM(s: any) {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getUserFromAuth(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = parseTeamId(params);
+    const { id } = await params;
+    const teamId = parseTeamId(id);
     if (!teamId) return NextResponse.json({ error: 'bad team id' }, { status: 400 });
 
     const team = await prisma.team.findFirst({
@@ -55,13 +56,14 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getUserFromAuth(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = parseTeamId(params);
+    const { id } = await params;
+    const teamId = parseTeamId(id);
     if (!teamId) return NextResponse.json({ error: 'bad team id' }, { status: 400 });
 
     const team = await prisma.team.findFirst({
@@ -90,7 +92,7 @@ export async function POST(
     const date = new Date(`${dateStr}T00:00:00`);
 
     const created = await prisma.irregularEvent.create({
-      data: { teamId, title, date, startTime, endTime, jobType },
+      data: { teamId, title, date, startTime, endTime, jobType: jobType as any },
     });
 
     return NextResponse.json({ event: created });
