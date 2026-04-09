@@ -127,10 +127,12 @@ export default function Page() {
 
   if (validating) {
     return (
-      <div className="grid min-h-dvh place-items-center">
-        <div className="rounded-2xl border p-6 shadow-sm">
-          <p className="text-neutral-700">Validating session…</p>
+      <div style={{ display: 'grid', minHeight: '100dvh', placeItems: 'center', background: 'var(--bg)' }}>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 16, padding: '24px 32px', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 18, height: 18, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+          <p style={{ fontSize: 14, color: 'var(--text-2)' }}>Validating session…</p>
         </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }

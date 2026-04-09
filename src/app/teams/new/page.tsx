@@ -33,33 +33,50 @@ const WEEKDAY_MAP: Record<
   saturday: 'SAT',
   sunday: 'SUN',
 };
+const ALL_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+
 function dayToEnum(day: string) {
-  const key = String(day || '')
-    .trim()
-    .toLowerCase();
+  const key = String(day || '').trim().toLowerCase();
   return WEEKDAY_MAP[key] ?? null;
 }
 function normalizeTime(t?: string | null) {
   if (!t) return null;
   const s = String(t).trim();
   if (s.toLowerCase() === 'off' || s === '') return null;
-  // Accept "7:00", "07:00", "7:00 AM", "07:00:00"
-  // Return "HH:MM"
   const ampm = s.match(/am|pm/i);
   if (ampm) {
-    // Convert 12h -> 24h
     const d = new Date(`1970-01-01 ${s}`);
     if (isNaN(d.getTime())) return null;
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
     return `${hh}:${mm}`;
   }
-  // 24h fallback
   const m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
   if (!m) return null;
   const hh = String(m[1]).padStart(2, '0');
   const mm = m[2];
   return `${hh}:${mm}`;
+}
+
+// Parses compound availability cell: "Available All Day" / "Partially Available5:00 AM - 2:00 PM" / "Unavailable All Day"
+function parseAvailCell(val: string | null | undefined): { start: string; end: string } | null {
+  const s = String(val ?? '').trim();
+  if (!s) return null;
+  const lower = s.toLowerCase();
+  if (lower.includes('unavailable')) return null;
+  if (lower === 'available all day') return { start: '00:00', end: '23:59' };
+  // "Partially Available5:00 AM - 2:00 PM" or "Partially Available 5:00 AM - 2:00 PM"
+  const match = s.match(/partially\s+available\s*(.+)/i);
+  if (match) {
+    const range = match[1].trim();
+    const dashIdx = range.indexOf(' - ');
+    if (dashIdx !== -1) {
+      const start = normalizeTime(range.slice(0, dashIdx).trim());
+      const end = normalizeTime(range.slice(dashIdx + 3).trim());
+      if (start && end) return { start, end };
+    }
+  }
+  return null;
 }
 
 // API client helpers (client-safe fetch)
@@ -86,6 +103,12 @@ async function apiSaveAvailability(
       job?: string | null;
       position?: string | null;
       leadership?: string | null;
+      ranking?: number | null;
+      minHoursWeek?: number | null;
+      maxHoursWeek?: number | null;
+      minDaysWeek?: number | null;
+      maxDaysWeek?: number | null;
+      notes?: string | null;
     }[];
     windows: {
       memberName: string;
@@ -194,16 +217,26 @@ export default function CreateTeamPage() {
   const availabilityPayload = useMemo(() => {
     if (!availabilityRows || availabilityRows.length === 0) return null;
 
-    // Expecting columns: Name, Position, Leadership (optional) + pairs like "Monday Start", "Monday End", etc.
+    const headers = Object.keys(availabilityRows[0]);
+    // Detect format: new format has single day columns like "Monday" containing compound values;
+    // old format has "Monday Start" / "Monday End" pairs.
+    const isNewFormat = ALL_DAYS.some((d) => headers.includes(d));
+
     const members: {
       name: string;
       job?: string | null;
       position?: string | null;
       leadership?: string | null;
+      ranking?: number | null;
+      minHoursWeek?: number | null;
+      maxHoursWeek?: number | null;
+      minDaysWeek?: number | null;
+      maxDaysWeek?: number | null;
+      notes?: string | null;
     }[] = [];
     const windows: {
       memberName: string;
-      weekday: any;
+      weekday: 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN';
       startHHMM: string | null;
       endHHMM: string | null;
     }[] = [];
@@ -213,43 +246,49 @@ export default function CreateTeamPage() {
       if (!name) continue;
 
       const job = String(row['Position'] ?? row['Job'] ?? '').trim() || null;
-      const position =
-        String(row['PositionTitle'] ?? row['Position'] ?? '').trim() || null;
+      const position = String(row['PositionTitle'] ?? row['Position'] ?? '').trim() || null;
       const leadership = String(row['Leadership'] ?? '').trim() || null;
-      members.push({ name, job, position, leadership });
 
-      // For each weekday, read "<Day> Start" and "<Day> End"
-      (
-        [
-          'Monday',
-          'Tuesday',
-          'Wednesday',
-          'Thursday',
-          'Friday',
-          'Saturday',
-          'Sunday',
-        ] as const
-      ).forEach((day) => {
-        const start = normalizeTime(
-          String(
-            row[`${day} Start`] ?? row[`${day}Start`] ?? row[`${day}`] ?? ''
-          ).trim()
-        );
-        const end = normalizeTime(
-          String(row[`${day} End`] ?? row[`${day}End`] ?? '').trim()
-        );
-        const enumDay = dayToEnum(day);
-        if (!enumDay) return;
-        // If both null => skip; else push (allow nulls to indicate OFF)
-        if (start !== null || end !== null) {
-          windows.push({
-            memberName: name,
-            weekday: enumDay,
-            startHHMM: start,
-            endHHMM: end,
-          });
+      if (isNewFormat) {
+        const rankingRaw = parseFloat(String(row['Ranking'] ?? ''));
+        const minH = parseFloat(String(row['Min hours per week'] ?? row['Min Hours/Week'] ?? ''));
+        const maxH = parseFloat(String(row['Max hours per week'] ?? row['Max Hours/Week'] ?? ''));
+        const minD = parseFloat(String(row['Min Days per week'] ?? row['Min Days/Week'] ?? ''));
+        const maxD = parseFloat(String(row['Max Days per week'] ?? row['Max Days/Week'] ?? ''));
+        const notes = String(row['Notes'] ?? '').trim() || null;
+
+        members.push({
+          name, job, position, leadership,
+          ranking: Number.isFinite(rankingRaw) ? rankingRaw : null,
+          minHoursWeek: Number.isFinite(minH) ? minH : null,
+          maxHoursWeek: Number.isFinite(maxH) ? maxH : null,
+          minDaysWeek: Number.isFinite(minD) ? minD : null,
+          maxDaysWeek: Number.isFinite(maxD) ? maxD : null,
+          notes,
+        });
+
+        for (const day of ALL_DAYS) {
+          if (!headers.includes(day)) continue;
+          const enumDay = dayToEnum(day);
+          if (!enumDay) continue;
+          const times = parseAvailCell(String(row[day] ?? ''));
+          if (times) {
+            windows.push({ memberName: name, weekday: enumDay, startHHMM: times.start, endHHMM: times.end });
+          }
         }
-      });
+      } else {
+        // Old format: "Monday Start" / "Monday End" pairs
+        members.push({ name, job, position, leadership });
+        ALL_DAYS.forEach((day) => {
+          const start = normalizeTime(String(row[`${day} Start`] ?? row[`${day}Start`] ?? row[`${day}`] ?? '').trim());
+          const end = normalizeTime(String(row[`${day} End`] ?? row[`${day}End`] ?? '').trim());
+          const enumDay = dayToEnum(day);
+          if (!enumDay) return;
+          if (start !== null || end !== null) {
+            windows.push({ memberName: name, weekday: enumDay, startHHMM: start, endHHMM: end });
+          }
+        });
+      }
     }
 
     return { members, windows };
@@ -258,6 +297,11 @@ export default function CreateTeamPage() {
   // ===== Transform shift requirements to API shape =====
   const shiftTemplatesPayload = useMemo(() => {
     if (!shiftRows || shiftRows.length === 0) return null;
+
+    const headers = Object.keys(shiftRows[0]);
+    // Detect pivoted format: columns include day names like "Monday", "Tuesday", etc.
+    const isPivoted = ALL_DAYS.some((d) => headers.includes(d));
+
     const templates: {
       shiftName: string;
       jobType?: string | null;
@@ -266,24 +310,54 @@ export default function CreateTeamPage() {
       endHHMM: string;
     }[] = [];
 
-    for (const r of shiftRows) {
-      const shiftName = String(r['Shift'] ?? '').trim();
-      const jobType = String(r['Job_Type'] ?? '').trim() || null;
-      const day = dayToEnum(String(r['Day'] ?? ''));
-      const start = normalizeTime(String(r['Start_Time'] ?? ''));
-      const end = normalizeTime(String(r['End_Time'] ?? ''));
+    if (isPivoted) {
+      // Pivoted format: first column = shift/role name, day columns = "HH:MM AM - HH:MM PM"
+      for (const r of shiftRows) {
+        const firstKey = Object.keys(r)[0];
+        const shiftName = String(r[firstKey] ?? '').trim();
+        if (!shiftName) continue;
 
-      if (!shiftName || !day || !start || !end) continue;
-      templates.push({
-        shiftName,
-        jobType,
-        weekday: day,
-        startHHMM: start,
-        endHHMM: end,
-      });
+        // Derive jobType from shift name
+        const lower = shiftName.toLowerCase();
+        let jobType: string | null = null;
+        if (lower.includes('boh') || lower.includes('back') || lower.includes('kitchen')) jobType = 'BOH';
+        else if (lower.includes('foh') || lower.includes('front')) jobType = 'FOH';
+        else if (lower.includes('truck') || lower.includes('delivery')) jobType = 'TRUCK';
+        else if (lower.includes('prep')) jobType = 'PREP';
+
+        for (const day of ALL_DAYS) {
+          if (!headers.includes(day)) continue;
+          const val = String(r[day] ?? '').trim();
+          if (!val) continue;
+          const enumDay = dayToEnum(day);
+          if (!enumDay) continue;
+
+          // Support multiple time ranges per cell separated by newlines
+          const entries = val.includes('\n') ? val.split('\n') : [val];
+          for (const entry of entries) {
+            const dashIdx = entry.indexOf(' - ');
+            if (dashIdx === -1) continue;
+            const start = normalizeTime(entry.slice(0, dashIdx).trim());
+            const end = normalizeTime(entry.slice(dashIdx + 3).trim());
+            if (!start || !end) continue;
+            templates.push({ shiftName, jobType, weekday: enumDay, startHHMM: start, endHHMM: end });
+          }
+        }
+      }
+    } else {
+      // Flat format: Shift, Job_Type, Day, Start_Time, End_Time columns
+      for (const r of shiftRows) {
+        const shiftName = String(r['Shift'] ?? '').trim();
+        const jobType = String(r['Job_Type'] ?? '').trim() || null;
+        const day = dayToEnum(String(r['Day'] ?? ''));
+        const start = normalizeTime(String(r['Start_Time'] ?? ''));
+        const end = normalizeTime(String(r['End_Time'] ?? ''));
+        if (!shiftName || !day || !start || !end) continue;
+        templates.push({ shiftName, jobType, weekday: day, startHHMM: start, endHHMM: end });
+      }
     }
 
-    return { templates };
+    return templates.length > 0 ? { templates } : null;
   }, [shiftRows]);
 
   const canSave =

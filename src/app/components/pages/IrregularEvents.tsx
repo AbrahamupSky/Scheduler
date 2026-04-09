@@ -72,8 +72,8 @@ export default function IrregularEventsPage() {
           setSelectedTeamId(data[0].id);
           setSelectedTeamName(data[0].name);
         }
-      } catch (e: any) {
-        setTeamsError(e?.message || 'Unable to fetch teams');
+      } catch (e: unknown) {
+        setTeamsError((e as Error)?.message || 'Unable to fetch teams');
         setTeams([]);
       }
     })();
@@ -96,8 +96,8 @@ export default function IrregularEventsPage() {
         }
         const payload = await res.json();
         setEvents(payload.events ?? []);
-      } catch (e: any) {
-        Toast.fire({ icon: 'error', title: e?.message || 'Failed to load events' });
+      } catch (e: unknown) {
+        Toast.fire({ icon: 'error', title: (e as Error)?.message || 'Failed to load events' });
         setEvents(null);
       } finally {
         setLoadingEvents(false);
@@ -115,8 +115,8 @@ export default function IrregularEventsPage() {
       if (!res.ok) throw new Error('Failed to refresh teams');
       const data = (await res.json()) as Team[];
       setTeams(data);
-    } catch (e: any) {
-      setTeamsError(e?.message || 'Unable to refresh teams');
+    } catch (e: unknown) {
+      setTeamsError((e as Error)?.message || 'Unable to refresh teams');
     }
   };
 
@@ -156,8 +156,8 @@ export default function IrregularEventsPage() {
 
       // refresh list
       setEvents((prev) => (prev ? [...prev, data.event] : [data.event]));
-    } catch (e: any) {
-      Swal.fire('Error', e?.message || 'Failed to create event', 'error');
+    } catch (e: unknown) {
+      Swal.fire('Error', (e as Error)?.message || 'Failed to create event', 'error');
     }
   };
 
@@ -220,8 +220,8 @@ export default function IrregularEventsPage() {
       setEvents((prev) =>
         prev ? prev.map((x) => (x.id === ev.id ? data.event : x)) : prev
       );
-    } catch (e: any) {
-      Swal.fire('Error', e?.message || 'Failed to update event', 'error');
+    } catch (e: unknown) {
+      Swal.fire('Error', (e as Error)?.message || 'Failed to update event', 'error');
     }
   };
 
@@ -248,8 +248,8 @@ export default function IrregularEventsPage() {
 
       Toast.fire({ icon: 'success', title: 'Deleted' });
       setEvents((prev) => (prev ? prev.filter((x) => x.id !== ev.id) : prev));
-    } catch (e: any) {
-      Swal.fire('Error', e?.message || 'Failed to delete event', 'error');
+    } catch (e: unknown) {
+      Swal.fire('Error', (e as Error)?.message || 'Failed to delete event', 'error');
     }
   };
 
@@ -264,204 +264,175 @@ export default function IrregularEventsPage() {
   }, [events]);
 
   return (
-    <div className="space-y-8">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
-          <h1 className="text-2xl font-semibold">🗓️ Irregular Events</h1>
-          <p className="text-sm text-neutral-600">
-            {selectedTeamName ? (
-              <>
-                Team: <span className="font-medium">{selectedTeamName}</span>
-              </>
-            ) : (
-              'Pick a team to manage its events.'
-            )}
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            📅 Irregular Events
+          </h1>
+          <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4 }}>
+            {selectedTeamName
+              ? <><strong style={{ color: 'var(--text-2)' }}>{selectedTeamName}</strong></>
+              : 'Pick a team to manage its events.'}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Link
-            href="/teams/new"
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
-          >
-            + Create Team
-          </Link>
-        </div>
+        <Link href="/teams/new" className="btn-ghost" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+          + New Team
+        </Link>
       </div>
 
       {/* Team picker */}
-      <section className="rounded-2xl border p-5">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Teams</h2>
-          <button
-            onClick={refreshTeams}
-            className="rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-neutral-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
-          >
+      <section className="card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <h2 className="section-title" style={{ margin: 0 }}>Teams</h2>
+          <button onClick={refreshTeams} className="btn-ghost" style={{ padding: '4px 12px', fontSize: 13 }}>
             Refresh
           </button>
         </div>
 
-        <div className="mt-3">
-          {teamsError && (
-            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              {teamsError}
-            </div>
-          )}
+        {teamsError && (
+          <div style={{ borderRadius: 8, border: '1px solid var(--danger)', background: 'var(--danger-soft)', padding: '8px 12px', fontSize: 13, color: 'var(--danger)', marginBottom: 10 }}>
+            {teamsError}
+          </div>
+        )}
 
-          <div className="relative mt-2 overflow-hidden rounded-xl border">
-            <div className="max-h-[220px] overflow-y-auto">
-              {teams === null ? (
-                <div className="p-4 text-sm text-neutral-400">Loading teams…</div>
-              ) : teams.length === 0 ? (
-                <div className="p-4 text-sm text-neutral-600">No teams yet.</div>
-              ) : (
-                <ul className="divide-y">
-                  {teams.map((t) => {
-                    const active = t.id === selectedTeamId;
-                    return (
-                      <li
-                        key={t.id}
-                        className={`flex items-center justify-between p-3 ${
-                          active ? 'bg-blue-50 dark:bg-blue-950/30' : 'bg-white dark:bg-gray-900'
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{t.name}</p>
-                          <p className="truncate text-xs text-neutral-500">ID: {t.id}</p>
-                        </div>
-                        {active ? (
-                          <span className="rounded-md bg-blue-600 px-2 py-1 text-xs text-white">
-                            Active
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => pickTeam(t)}
-                            className="rounded-md border px-2 py-1 text-xs hover:bg-neutral-50"
-                          >
-                            Use This
-                          </button>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+          <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            {teams === null ? (
+              <div style={{ padding: 16, fontSize: 13, color: 'var(--text-3)' }}>Loading teams…</div>
+            ) : teams.length === 0 ? (
+              <div style={{ padding: 16, fontSize: 13, color: 'var(--text-2)' }}>No teams yet.</div>
+            ) : (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                {teams.map((t) => {
+                  const active = t.id === selectedTeamId;
+                  return (
+                    <li key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border)', background: active ? 'var(--accent-soft)' : 'var(--surface)' }}>
+                      <div>
+                        <p style={{ fontSize: 14, fontWeight: 500, color: active ? 'var(--accent-text)' : 'var(--text)' }}>{t.name}</p>
+                        <p style={{ fontSize: 11, color: 'var(--text-3)' }}>ID: {t.id}</p>
+                      </div>
+                      {active ? (
+                        <span className="badge badge-accent">Active</span>
+                      ) : (
+                        <button onClick={() => pickTeam(t)} className="btn-ghost" style={{ padding: '3px 10px', fontSize: 12 }}>Select</button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
         </div>
       </section>
 
       {/* Add event */}
-      <section className="rounded-2xl border p-5">
-        <h2 className="mb-2 text-lg font-semibold">➕ Add Event</h2>
-        <p className="mb-4 text-sm text-neutral-600">
-          Use this for meetings, training, time off, special assignments, etc.
+      <section className="card">
+        <h2 className="section-title">➕ Add Event</h2>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: -8, marginBottom: 16 }}>
+          Meetings, training, time off, special assignments, etc.
         </p>
 
-        <div className="grid gap-3 md:grid-cols-5">
+        <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
           <input
-            className="rounded-lg border p-2 text-sm md:col-span-2"
+            className="input"
+            style={{ gridColumn: 'span 2' }}
             placeholder="Title (e.g., Staff meeting)"
             value={form.title}
             onChange={(e) => setForm((s) => ({ ...s, title: e.target.value }))}
           />
           <input
-            className="rounded-lg border p-2 text-sm"
+            className="input"
             type="date"
             value={form.date}
             onChange={(e) => setForm((s) => ({ ...s, date: e.target.value }))}
           />
           <input
-            className="rounded-lg border p-2 text-sm"
+            className="input"
             type="time"
             value={form.startTime}
             onChange={(e) => setForm((s) => ({ ...s, startTime: e.target.value }))}
           />
           <input
-            className="rounded-lg border p-2 text-sm"
+            className="input"
             type="time"
             value={form.endTime}
             onChange={(e) => setForm((s) => ({ ...s, endTime: e.target.value }))}
           />
-
           <input
-            className="rounded-lg border p-2 text-sm md:col-span-2"
+            className="input"
+            style={{ gridColumn: 'span 2' }}
             placeholder="Job Type (optional) e.g., FOH / BOH"
             value={form.jobType}
             onChange={(e) => setForm((s) => ({ ...s, jobType: e.target.value }))}
           />
+        </div>
 
-          <div className="md:col-span-3">
-            <button
-              onClick={createEvent}
-              disabled={!selectedTeamId}
-              className={`rounded-lg px-4 py-2 text-sm text-white ${
-                selectedTeamId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-300'
-              }`}
-            >
-              Add Event
-            </button>
-          </div>
+        <div style={{ marginTop: 14 }}>
+          <button onClick={createEvent} disabled={!selectedTeamId} className="btn-primary">
+            Add Event
+          </button>
         </div>
       </section>
 
       {/* Events list */}
-      <section className="rounded-2xl border p-5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">📌 Events</h2>
-          <div className="text-xs text-neutral-500">
+      <section className="card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <h2 className="section-title" style={{ margin: 0 }}>📌 Events</h2>
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
             {loadingEvents ? 'Loading…' : `${events?.length ?? 0} total`}
-          </div>
+          </span>
         </div>
 
         {!selectedTeamId ? (
-          <div className="mt-3 rounded-lg border border-dashed p-6 text-sm text-neutral-500">
+          <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 24, fontSize: 13, color: 'var(--text-3)', textAlign: 'center' }}>
             Pick a team to see events.
           </div>
         ) : !events ? (
-          <div className="mt-3 rounded-lg border border-dashed p-6 text-sm text-neutral-500">
+          <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 24, fontSize: 13, color: 'var(--text-3)', textAlign: 'center' }}>
             Could not load events.
           </div>
         ) : events.length === 0 ? (
-          <div className="mt-3 rounded-lg border border-dashed p-6 text-sm text-neutral-500">
+          <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 24, fontSize: 13, color: 'var(--text-3)', textAlign: 'center' }}>
             No irregular events yet.
           </div>
         ) : (
-          <div className="mt-4 space-y-4">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {grouped.map(([day, items]) => (
-              <div key={day} className="rounded-xl border">
-                <div className="flex items-center justify-between border-b px-4 py-3">
-                  <div className="text-sm font-semibold">{day}</div>
-                  <div className="text-xs text-neutral-500">{items.length} events</div>
+              <div key={day} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                {/* Day header */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--elevated)', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{day}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{items.length} event{items.length !== 1 ? 's' : ''}</span>
                 </div>
 
-                <div className="divide-y">
-                  {items.map((ev) => (
-                    <div key={ev.id} className="flex items-center justify-between px-4 py-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{ev.title}</div>
-                        <div className="text-xs text-neutral-500">
-                          {ev.startTime}–{ev.endTime}
-                          {ev.jobType ? ` • ${ev.jobType}` : ''}
-                        </div>
+                {/* Event rows */}
+                {items.map((ev, idx) => (
+                  <div key={ev.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderTop: idx > 0 ? '1px solid var(--border)' : undefined, gap: 12 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {ev.title}
                       </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => editEvent(ev)}
-                          className="rounded-md border px-2 py-1 text-xs hover:bg-neutral-50"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => deleteEvent(ev)}
-                          className="rounded-md border px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
+                      <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
+                        {ev.startTime}–{ev.endTime}
+                        {ev.jobType && (
+                          <span style={{ marginLeft: 8 }}>
+                            <span className="badge badge-accent">{ev.jobType}</span>
+                          </span>
+                        )}
                       </div>
                     </div>
-                  ))}
-                </div>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button onClick={() => editEvent(ev)} className="btn-ghost" style={{ padding: '3px 10px', fontSize: 12 }}>
+                        Edit
+                      </button>
+                      <button onClick={() => deleteEvent(ev)} className="btn-danger" style={{ padding: '3px 10px', fontSize: 12 }}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             ))}
           </div>

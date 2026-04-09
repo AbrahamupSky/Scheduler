@@ -5,36 +5,32 @@ import { useRouter } from 'next/navigation';
 import { apiLogin, apiSignup } from '@/app/lib/clientApi';
 import Swal from 'sweetalert2';
 
+const Toast = Swal.mixin({
+  toast: true,
+  position: 'top',
+  showConfirmButton: false,
+  timer: 3000,
+  timerProgressBar: true,
+  didOpen: (toast) => {
+    toast.onmouseenter = Swal.stopTimer;
+    toast.onmouseleave = Swal.resumeTimer;
+  },
+});
+
 export default function AuthPage() {
   const router = useRouter();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
 
-  // login fields
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [password, setPassword] = useState('');
-  // signup fields
   const [suUsername, setSuUsername] = useState('');
   const [suEmail, setSuEmail] = useState('');
   const [suPassword, setSuPassword] = useState('');
   const [suConfirm, setSuConfirm] = useState('');
 
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
 
   async function onLogin() {
-    const Toast = Swal.mixin({
-      toast: true,
-      position: 'top',
-      showConfirmButton: false,
-      timer: 3000,
-      timerProgressBar: true,
-      didOpen: (toast) => {
-        toast.onmouseenter = Swal.stopTimer;
-        toast.onmouseleave = Swal.resumeTimer;
-      }
-    });
-
-    setErr(null);
     setBusy(true);
     try {
       const res = await apiLogin(usernameOrEmail.trim(), password);
@@ -44,288 +40,250 @@ export default function AuthPage() {
       window.dispatchEvent(new Event('auth:login'));
       router.replace('/');
       router.refresh();
-    } catch (e: any) {
-      Toast.fire({
-        icon: 'error',
-        title: 'Login failed',
-        text: e?.message || 'Something went wrong. Please try again.',
-      });
+    } catch (e: unknown) {
+      Toast.fire({ icon: 'error', title: 'Login failed', text: (e as Error)?.message || 'Something went wrong.' });
     } finally {
       setBusy(false);
     }
   }
 
   async function onSignup() {
-    const Toast = Swal.mixin({
-      toast: true,
-      position: 'top',
-      showConfirmButton: false,
-      timer: 3000,
-      timerProgressBar: true,
-      didOpen: (toast) => {
-        toast.onmouseenter = Swal.stopTimer;
-        toast.onmouseleave = Swal.resumeTimer;
-      },
-    });
-
-    setErr(null);
-
     if (suPassword !== suConfirm) {
-      Swal.fire({
-        icon: 'warning',
-        title: 'Passwords do not match',
-        text: 'Please confirm your password again.',
-      });
+      Swal.fire({ icon: 'warning', title: 'Passwords do not match', text: 'Please confirm your password again.' });
       return;
     }
-
     setBusy(true);
     try {
       await apiSignup(suUsername.trim(), suEmail.trim(), suPassword);
-
-      Toast.fire({
-        icon: 'success',
-        title: 'Account created successfully',
-      });
-
-      // Auto-login right after signup
+      Toast.fire({ icon: 'success', title: 'Account created!' });
       const res = await apiLogin(suEmail.trim(), suPassword);
       localStorage.setItem('authToken', res.token);
       localStorage.setItem('username', res.user.username);
       localStorage.setItem('userId', String(res.user.id));
-
       window.dispatchEvent(new Event('auth:login'));
       router.replace('/');
       router.refresh();
-    } catch (e: any) {
-      Swal.fire({
-        icon: 'error',
-        title: 'Signup failed',
-        text: e?.message || 'Something went wrong. Please try again.',
-      });
+    } catch (e: unknown) {
+      Swal.fire({ icon: 'error', title: 'Signup failed', text: (e as Error)?.message || 'Something went wrong.' });
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <main className="min-h-dvh bg-white dark:bg-gray-900">
-      <div className="lg:min-h-screen flex fle-col items-center justify-center p-6">
-        <div className="grid lg:grid-cols-2 items-center gap-10 max-w-6xl max-lg:max-w-lg w-full">
-          <div>
-            <h1 className="lg:text-5xl text-4xl font-bold text-gray-300 !leading-tight">
-              Auto Scheduler
-            </h1>
-            <p className="text-[15px] mt-6 text-slate-600 leading-relaxed" />
-            {mode === 'login' ? (
-              <p className="text-[15px] mt-6 lg:mt-12 text-slate-600">
-                Don&apos;t have an account
-                <button
-                  type="button"
-                  onClick={() => setMode('signup')}
-                  className="text-blue-600 font-medium hover:underline ml-1"
-                >
-                  Register here
-                </button>
-              </p>
-            ) : (
-              <p className="text-[15px] mt-6 lg:mt-12 text-slate-600">
-                Already have an account?
-                <button
-                  type="button"
-                  onClick={() => setMode('login')}
-                  className="text-blue-600 font-medium hover:underline ml-1"
-                >
-                  Sign in here
-                </button>
-              </p>
-            )}
-          </div>
-
-          {mode === 'login' ? (
-            // ===================== LOGIN =====================
-            <form
-              className="max-w-md lg:ml-auto w-full"
-              onSubmit={(e) => {
-                e.preventDefault();
-                onLogin();
+    <div
+      style={{
+        minHeight: '100dvh',
+        background: 'var(--bg)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 900,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gap: 48,
+          alignItems: 'center',
+        }}
+      >
+        {/* ── Left: Brand ───────────────────────────────────── */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+            <div
+              style={{
+                width: 42,
+                height: 42,
+                borderRadius: 12,
+                background: 'var(--accent)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 22,
               }}
             >
-              <h2 className="text-gray-300 text-3xl font-semibold mb-4">
+              🗓️
+            </div>
+            <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>
+              Auto Scheduler
+            </span>
+          </div>
+
+          <h1 style={{ fontSize: 32, fontWeight: 700, color: 'var(--text)', lineHeight: 1.25, marginBottom: 12 }}>
+            {mode === 'login' ? 'Welcome back' : 'Get started'}
+          </h1>
+
+          <p style={{ fontSize: 15, color: 'var(--text-2)', lineHeight: 1.6, marginBottom: 24 }}>
+            {mode === 'login'
+              ? 'Sign in to manage your team schedules.'
+              : 'Create an account to start building smart schedules.'}
+          </p>
+
+          <p style={{ fontSize: 14, color: 'var(--text-3)' }}>
+            {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+            <button
+              type="button"
+              onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--accent)',
+                fontWeight: 500,
+                cursor: 'pointer',
+                fontSize: 14,
+                padding: 0,
+                textDecoration: 'underline',
+                textUnderlineOffset: 3,
+              }}
+            >
+              {mode === 'login' ? 'Register here' : 'Sign in here'}
+            </button>
+          </p>
+        </div>
+
+        {/* ── Right: Form card ──────────────────────────────── */}
+        <div
+          style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 16,
+            padding: 32,
+          }}
+        >
+          {mode === 'login' ? (
+            <form onSubmit={(e) => { e.preventDefault(); onLogin(); }}>
+              <h2 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text)', marginBottom: 24 }}>
                 Sign in
               </h2>
 
-              {err && (
-                <div className="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {err}
-                </div>
-              )}
-
-              <div className="space-y-6">
-                <div>
-                  <label className="text-sm text-gray-300 font-medium mb-2 block">
-                    Email or Username
-                  </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <Field label="Email or Username">
                   <input
-                    name="email"
+                    className="input"
                     type="text"
                     required
                     value={usernameOrEmail}
                     onChange={(e) => setUsernameOrEmail(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && onLogin()}
-                    className="bg-slate-900 w-full text-sm text-slate-100 px-4 py-3 rounded-md outline-0 border border-gray-200 focus:border-blue-600 focus:bg-transparent"
                     placeholder="Enter email or username"
                     autoComplete="username"
                   />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-300 font-medium mb-2 block">
-                    Password
-                  </label>
+                </Field>
+
+                <Field label="Password">
                   <input
-                    name="password"
+                    className="input"
                     type="password"
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && onLogin()}
-                    className="bg-slate-900 w-full text-sm text-slate-100 px-4 py-3 rounded-md outline-0 border border-gray-200 focus:border-blue-600 focus:bg-transparent"
-                    placeholder="Enter Password"
+                    placeholder="Enter password"
                     autoComplete="current-password"
                   />
-                </div>
-
-                {/* <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center">
-                    <input
-                      id="remember-me"
-                      name="remember-me"
-                      type="checkbox"
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
-                    />
-                    <label
-                      htmlFor="remember-me"
-                      className="ml-3 block text-sm text-gray-300"
-                    >
-                      Remember me
-                    </label>
-                  </div>
-                  <div className="text-sm">
-                    <a
-                      href="javascript:void(0);"
-                      className="text-blue-600 hover:text-blue-500 font-medium"
-                    >
-                      Forgot your password?
-                    </a>
-                  </div>
-                </div> */}
+                </Field>
               </div>
 
-              <div className="!mt-8">
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className={`w-full shadow-xl py-2.5 px-4 text-[15px] font-medium rounded-md text-white ${
-                    busy ? 'bg-blue-300' : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
-                >
-                  {busy ? 'Signing in…' : 'Log in'}
-                </button>
-              </div>
+              <button
+                type="submit"
+                disabled={busy}
+                className="btn-primary"
+                style={{ width: '100%', marginTop: 24, padding: '10px 16px', fontSize: 15 }}
+              >
+                {busy ? 'Signing in…' : 'Sign in'}
+              </button>
             </form>
           ) : (
-            // ===================== SIGNUP =====================
-            <form
-              className="max-w-md lg:ml-auto w-full"
-              onSubmit={(e) => {
-                e.preventDefault();
-                onSignup();
-              }}
-            >
-              <h2 className="text-gray-300 text-3xl font-semibold mb-4">
+            <form onSubmit={(e) => { e.preventDefault(); onSignup(); }}>
+              <h2 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text)', marginBottom: 24 }}>
                 Create account
               </h2>
 
-              {err && (
-                <div className="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {err}
-                </div>
-              )}
-
-              <div className="space-y-6">
-                <div>
-                  <label className="text-sm text-gray-300 font-medium mb-2 block">
-                    Username
-                  </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <Field label="Username">
                   <input
+                    className="input"
                     type="text"
                     required
                     value={suUsername}
                     onChange={(e) => setSuUsername(e.target.value)}
-                    className="bg-slate-900 w-full text-sm text-slate-100 px-4 py-3 rounded-md outline-0 border border-gray-200 focus:border-blue-600 focus:bg-transparent"
                     placeholder="Enter username"
                     autoComplete="username"
                   />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-300 font-medium mb-2 block">
-                    Email
-                  </label>
+                </Field>
+
+                <Field label="Email">
                   <input
+                    className="input"
                     type="email"
                     required
                     value={suEmail}
                     onChange={(e) => setSuEmail(e.target.value)}
-                    className="bg-slate-900 w-full text-sm text-slate-100 px-4 py-3 rounded-md outline-0 border border-gray-200 focus:border-blue-600 focus:bg-transparent"
-                    placeholder="Enter Email"
+                    placeholder="Enter email"
                     autoComplete="email"
                   />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-300 font-medium mb-2 block">
-                    Password
-                  </label>
+                </Field>
+
+                <Field label="Password">
                   <input
+                    className="input"
                     type="password"
                     required
                     value={suPassword}
                     onChange={(e) => setSuPassword(e.target.value)}
-                    className="bg-slate-900 w-full text-sm text-slate-100 px-4 py-3 rounded-md outline-0 border border-gray-200 focus:border-blue-600 focus:bg-transparent"
-                    placeholder="Enter Password"
+                    placeholder="Create a password"
                     autoComplete="new-password"
                   />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-300 font-medium mb-2 block">
-                    Confirm Password
-                  </label>
+                </Field>
+
+                <Field label="Confirm Password">
                   <input
+                    className="input"
                     type="password"
                     required
                     value={suConfirm}
                     onChange={(e) => setSuConfirm(e.target.value)}
-                    className="bg-slate-900 w-full text-sm text-slate-100 px-4 py-3 rounded-md outline-0 border border-gray-200 focus:border-blue-600 focus:bg-transparent"
-                    placeholder="Confirm Password"
+                    placeholder="Repeat your password"
                     autoComplete="new-password"
                   />
-                </div>
+                </Field>
               </div>
 
-              <div className="!mt-8">
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className={`w-full shadow-xl py-2.5 px-4 text-[15px] font-medium rounded-md text-white ${
-                    busy ? 'bg-blue-300' : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
-                >
-                  {busy ? 'Creating…' : 'Create Account'}
-                </button>
-              </div>
+              <button
+                type="submit"
+                disabled={busy}
+                className="btn-primary"
+                style={{ width: '100%', marginTop: 24, padding: '10px 16px', fontSize: 15 }}
+              >
+                {busy ? 'Creating account…' : 'Create account'}
+              </button>
             </form>
           )}
         </div>
       </div>
-    </main>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label
+        style={{
+          display: 'block',
+          fontSize: 13,
+          fontWeight: 500,
+          color: 'var(--text-2)',
+          marginBottom: 6,
+        }}
+      >
+        {label}
+      </label>
+      {children}
+    </div>
   );
 }

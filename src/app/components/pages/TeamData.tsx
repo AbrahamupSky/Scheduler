@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import Swal from 'sweetalert2';
+import Papa from 'papaparse';
 
 /** Helpers to normalize API shape -> table rows */
 const WEEKDAYS = [
@@ -31,6 +32,13 @@ function buildAvailabilityRowsFromApi(
     name: string;
     job?: string | null;
     position?: string | null;
+    ranking?: number | null;
+    leadership?: string | null;
+    minHoursWeek?: number | null;
+    maxHoursWeek?: number | null;
+    minDaysWeek?: number | null;
+    maxDaysWeek?: number | null;
+    notes?: string | null;
   }>,
   windows: Array<{
     memberId: number;
@@ -39,20 +47,20 @@ function buildAvailabilityRowsFromApi(
     endTime: string; // "HH:MM"
   }>,
 ) {
-  const byId = new Map<number, any>();
+  const byId = new Map<number, Record<string, string>>();
 
   members.forEach((m) => {
-    const row: any = {
+    const row: Record<string, string> = {
       Name: m.name,
       Job: m.job ?? '',
       Position: m.position ?? '',
 
-      Ranking: m.ranking ?? '',
+      Ranking: m.ranking != null ? String(m.ranking) : '',
       Leadership: m.leadership ?? '',
-      'Min Hours/Week': m.minHoursWeek ?? '',
-      'Max Hours/Week': m.maxHoursWeek ?? '',
-      'Min Days/Week': m.minDaysWeek ?? '',
-      'Max Days/Week': m.maxDaysWeek ?? '',
+      'Min Hours/Week': m.minHoursWeek != null ? String(m.minHoursWeek) : '',
+      'Max Hours/Week': m.maxHoursWeek != null ? String(m.maxHoursWeek) : '',
+      'Min Days/Week': m.minDaysWeek != null ? String(m.minDaysWeek) : '',
+      'Max Days/Week': m.maxDaysWeek != null ? String(m.maxDaysWeek) : '',
       Notes: m.notes ?? '',
     };
     WEEKDAYS.forEach((d) => (row[d] = ''));
@@ -70,58 +78,76 @@ function buildAvailabilityRowsFromApi(
   return Array.from(byId.values());
 }
 
-const SHIFT_DAYS = [
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-] as const;
 
-function buildShiftRowsCsvStyle(
-  templates: Array<{
-    // based on your DB response
-    shift: string; // <- this is your JOB_TYPE now (Truck, Prep, BOH General, etc.)
-    day: string; // "Monday"
-    startTime: string; // "05:30"
-    endTime: string; // "07:00"
-  }>,
-) {
-  // role/jobType -> day -> list of time ranges
-  const map = new Map<string, Record<string, string[]>>();
+/* ── Shift CSV helpers ───────────────────────────────── */
+const _WEEKDAY_MAP: Record<string, string> = {
+  monday: 'MON', tuesday: 'TUE', wednesday: 'WED', thursday: 'THU',
+  friday: 'FRI', saturday: 'SAT', sunday: 'SUN',
+};
+const _ALL_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  for (const t of templates) {
-    const jobType = (t.shift ?? '').trim();
-    if (!jobType) continue;
+function _normalizeTime(t?: string | null): string | null {
+  if (!t) return null;
+  const s = String(t).trim();
+  if (s.toLowerCase() === 'off' || s === '') return null;
+  const ampm = s.match(/am|pm/i);
+  if (ampm) {
+    const d = new Date(`1970-01-01 ${s}`);
+    if (isNaN(d.getTime())) return null;
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  const m = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return null;
+  return `${String(m[1]).padStart(2, '0')}:${m[2]}`;
+}
 
-    if (!map.has(jobType)) {
-      const init: Record<string, string[]> = {};
-      SHIFT_DAYS.forEach((d) => (init[d] = []));
-      map.set(jobType, init);
+function _parseShiftsFromCsv(rows: Record<string, string>[]) {
+  if (!rows.length) return [];
+  const headers = Object.keys(rows[0]);
+  const isPivoted = _ALL_DAYS.some((d) => headers.includes(d));
+  const templates: { shiftName: string; jobType: string | null; weekday: string; startHHMM: string; endHHMM: string }[] = [];
+
+  if (isPivoted) {
+    for (const r of rows) {
+      const firstKey = Object.keys(r)[0];
+      const shiftName = String(r[firstKey] ?? '').trim();
+      if (!shiftName) continue;
+      const lower = shiftName.toLowerCase();
+      let jobType: string | null = null;
+      if (lower.includes('boh') || lower.includes('back') || lower.includes('kitchen')) jobType = 'BOH';
+      else if (lower.includes('foh') || lower.includes('front')) jobType = 'FOH';
+      else if (lower.includes('truck') || lower.includes('delivery')) jobType = 'TRUCK';
+      else if (lower.includes('prep')) jobType = 'PREP';
+
+      for (const day of _ALL_DAYS) {
+        if (!headers.includes(day)) continue;
+        const val = String(r[day] ?? '').trim();
+        if (!val) continue;
+        const weekday = _WEEKDAY_MAP[day.toLowerCase()];
+        if (!weekday) continue;
+        const entries = val.includes('\n') ? val.split('\n') : [val];
+        for (const entry of entries) {
+          const dashIdx = entry.indexOf(' - ');
+          if (dashIdx === -1) continue;
+          const start = _normalizeTime(entry.slice(0, dashIdx).trim());
+          const end = _normalizeTime(entry.slice(dashIdx + 3).trim());
+          if (!start || !end) continue;
+          templates.push({ shiftName, jobType, weekday, startHHMM: start, endHHMM: end });
+        }
+      }
     }
-
-    const bucket = map.get(jobType)!;
-    const day = t.day;
-
-    if (SHIFT_DAYS.includes(day as any)) {
-      bucket[day].push(`${t.startTime} - ${t.endTime}`);
+  } else {
+    for (const r of rows) {
+      const shiftName = String(r['Shift'] ?? '').trim();
+      const jobType = String(r['Job_Type'] ?? '').trim() || null;
+      const weekday = _WEEKDAY_MAP[String(r['Day'] ?? '').trim().toLowerCase()];
+      const start = _normalizeTime(String(r['Start_Time'] ?? ''));
+      const end = _normalizeTime(String(r['End_Time'] ?? ''));
+      if (!shiftName || !weekday || !start || !end) continue;
+      templates.push({ shiftName, jobType, weekday, startHHMM: start, endHHMM: end });
     }
   }
-
-  // turn into rows like the CSV: first col is Job_Type, then each weekday col
-  const rows = Array.from(map.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([jobType, byDay]) => {
-      const row: any = { Job_Type: jobType };
-      SHIFT_DAYS.forEach((d) => {
-        // join multiple shifts in same day (if there are multiple templates)
-        row[d] = byDay[d].join('\n');
-      });
-      return row;
-    });
-
-  return rows;
+  return templates;
 }
 
 /** Component (display-only) */
@@ -146,12 +172,17 @@ export default function TeamData({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // shift re-upload
+  const shiftsUploadRef = useRef<HTMLInputElement>(null);
+  const [uploadingShifts, setUploadingShifts] = useState(false);
+
   // loaded tables
-  const [availabilityRows, setAvailabilityRows] = useState<any[] | null>(null);
-  const [shiftsRows, setShiftsRows] = useState<any[] | null>(null);
+  const [availabilityRows, setAvailabilityRows] = useState<Record<string, string>[] | null>(null);
+  // raw CSV rows uploaded by user — displayed exactly as-is
+  const [shiftCsvRawRows, setShiftCsvRawRows] = useState<Record<string, string>[] | null>(null);
 
   const availabilityCount = availabilityRows?.length ?? 0;
-  const shiftsCount = shiftsRows?.length ?? 0;
+  const shiftsCount = shiftCsvRawRows?.length ?? 0;
 
   const effectiveTeamId = selectedTeamId ?? teamId ?? null;
   const effectiveTeamName = selectedTeamName ?? teamName ?? null;
@@ -178,21 +209,24 @@ export default function TeamData({
           setSelectedTeamId(data[0].id);
           setSelectedTeamName(data[0].name);
         }
-      } catch (e: any) {
-        setTeamsError(e?.message || 'Unable to fetch teams');
+      } catch (e: unknown) {
+        setTeamsError((e as Error)?.message || 'Unable to fetch teams');
         setTeams([]);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Whenever team changes, load availability + shifts from their real endpoints
+  // Whenever team changes, load availability from the real endpoint
+  // (shifts are shown as raw CSV — not fetched from DB)
   useEffect(() => {
     if (!effectiveTeamId) {
       setAvailabilityRows(null);
-      setShiftsRows(null);
+      setShiftCsvRawRows(null);
       return;
     }
+
+    setShiftCsvRawRows(null); // clear previous team's CSV on team switch
 
     (async () => {
       const token = localStorage.getItem('authToken') ?? '';
@@ -218,27 +252,55 @@ export default function TeamData({
         console.warn('load availability failed', aRes.status, err);
         setAvailabilityRows(null);
       }
-
-      // ---- Shifts ----
-      const sRes = await fetch(`/api/teams/${effectiveTeamId}/shifts`, {
-        cache: 'no-store',
-        headers,
-      });
-
-      if (sRes.ok) {
-        const s = await sRes.json();
-        if (Array.isArray(s?.templates)) {
-          setShiftsRows(buildShiftRowsCsvStyle(s.templates));
-        } else {
-          setShiftsRows(null);
-        }
-      } else {
-        const err = await sRes.json().catch(() => ({}));
-        console.warn('load shifts failed', sRes.status, err);
-        setShiftsRows(null);
-      }
     })();
   }, [effectiveTeamId]);
+
+  const handleUploadShifts = (file: File) => {
+    if (!effectiveTeamId) return;
+    setUploadingShifts(true);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (res: Papa.ParseResult<Record<string, string>>) => {
+        // Keep raw rows exactly as PapaParse returned them (display as-is)
+        const rawRows = res.data.map((r) => {
+          const row: Record<string, string> = {};
+          Object.keys(r).forEach((k) => { row[k.trim()] = String(r[k] ?? '').trim(); });
+          return row;
+        }).filter(r => Object.values(r).some(v => v !== ''));
+
+        if (!rawRows.length) {
+          Swal.fire('Empty file', 'The CSV has no data rows.', 'warning');
+          setUploadingShifts(false);
+          return;
+        }
+
+        // Show the raw CSV immediately
+        setShiftCsvRawRows(rawRows);
+
+        // Save to DB in the background so Generate can use it
+        try {
+          const templates = _parseShiftsFromCsv(rawRows);
+          if (templates.length) {
+            const token = localStorage.getItem('authToken') ?? '';
+            const postRes = await fetch(`/api/teams/${effectiveTeamId}/shifts`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify({ templates }),
+            });
+            const data = await postRes.json().catch(() => ({}));
+            if (!postRes.ok) throw new Error(data?.error ?? 'Failed to save shifts');
+          }
+          Swal.fire({ toast: true, position: 'top', icon: 'success', title: `${rawRows.length} rows loaded`, showConfirmButton: false, timer: 2000 });
+        } catch (e: unknown) {
+          Swal.fire('Warning', `CSV displayed but DB save failed: ${(e as Error)?.message || 'unknown error'}`, 'warning');
+        } finally {
+          setUploadingShifts(false);
+        }
+      },
+      error: () => { Swal.fire('Parse Error', 'Failed to read the CSV file.', 'error'); setUploadingShifts(false); },
+    });
+  };
 
   const refreshTeams = async () => {
     const token =
@@ -252,8 +314,8 @@ export default function TeamData({
       if (!res.ok) throw new Error('Failed to refresh teams');
       const data = (await res.json()) as { id: number; name: string }[];
       setTeams(data);
-    } catch (e: any) {
-      setTeamsError(e?.message || 'Unable to refresh teams');
+    } catch (e: unknown) {
+      setTeamsError((e as Error)?.message || 'Unable to refresh teams');
     }
   };
 
@@ -261,6 +323,7 @@ export default function TeamData({
     setSelectedTeamId(t.id);
     setSelectedTeamName(t.name);
     setDeleteError(null);
+    setShiftCsvRawRows(null);
   };
 
   const handleDeleteTeam = async () => {
@@ -303,7 +366,7 @@ export default function TeamData({
       });
 
       const raw = await res.text();
-      let payload: any = null;
+      let payload: unknown = null;
       try {
         payload = raw ? JSON.parse(raw) : null;
       } catch {
@@ -311,9 +374,8 @@ export default function TeamData({
       }
 
       if (!res.ok) {
-        const msg =
-          (payload && (payload.message || payload.error)) ||
-          `Failed to delete team (HTTP ${res.status})`;
+        const p = payload as Record<string, string> | null;
+        const msg = (p?.message || p?.error) || `Failed to delete team (HTTP ${res.status})`;
         throw new Error(msg);
       }
 
@@ -335,7 +397,7 @@ export default function TeamData({
         setSelectedTeamId(null);
         setSelectedTeamName(null);
         setAvailabilityRows(null);
-        setShiftsRows(null);
+        setShiftCsvRawRows(null);
       }
 
       await Swal.fire({
@@ -345,8 +407,8 @@ export default function TeamData({
         timer: 1400,
         showConfirmButton: false,
       });
-    } catch (e: any) {
-      const msg = e?.message || 'Unable to delete team';
+    } catch (e: unknown) {
+      const msg = (e as Error)?.message || 'Unable to delete team';
 
       setDeleteError(msg);
 
@@ -366,166 +428,133 @@ export default function TeamData({
     const a = availabilityRows
       ? `${availabilityCount} people`
       : 'No availability';
-    const s = shiftsRows ? `${shiftsCount} shifts` : 'No shifts';
+    const s = shiftCsvRawRows ? `${shiftsCount} shifts` : 'No shifts uploaded';
     return `${a} • ${s}`;
   }, [
     effectiveTeamId,
     availabilityRows,
-    shiftsRows,
+    shiftCsvRawRows,
     availabilityCount,
     shiftsCount,
   ]);
 
   return (
-    <div className="space-y-8">
-      {/* Title */}
-      <div className="flex items-center justify-between gap-3">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
-          <h1 className="text-2xl font-semibold">📁 Team Data</h1>
-          <p className="text-sm text-neutral-600">
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            👥 Team Data
+          </h1>
+          <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4 }}>
             {effectiveTeamName ? (
-              <>
-                Viewing team:{' '}
-                <span className="font-medium">{effectiveTeamName}</span> —{' '}
-                {statusText}
-              </>
-            ) : (
-              'No team selected'
-            )}
+              <>Viewing: <strong style={{ color: 'var(--text-2)' }}>{effectiveTeamName}</strong> — {statusText}</>
+            ) : 'No team selected'}
           </p>
         </div>
-
-        <div className="flex items-center gap-2">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             onClick={handleDeleteTeam}
             disabled={!effectiveTeamId || deleting}
-            className="rounded-lg border border-red-300 bg-red-600 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/50 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-700/20"
-            title={
-              !effectiveTeamId ? 'Select a team to delete' : 'Delete this team'
-            }
+            className="btn-danger"
+            title={!effectiveTeamId ? 'Select a team to delete' : 'Delete this team'}
           >
-            {deleting ? 'Deleting...' : '🗑️ Delete Team'}
+            {deleting ? 'Deleting…' : '🗑️ Delete Team'}
           </button>
-
           <Link
             href="/teams/new"
-            className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+            className="btn-primary"
+            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
           >
-            + Create New Team
+            + New Team
           </Link>
         </div>
       </div>
 
-      {/* Delete error */}
       {deleteError && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div style={{ borderRadius: 8, border: '1px solid var(--danger)', background: 'var(--danger-soft)', padding: '10px 14px', fontSize: 13, color: 'var(--danger)' }}>
           {deleteError}
         </div>
       )}
 
       {/* Teams selector */}
-      <section className="rounded-2xl border p-5">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Teams</h2>
-          <button
-            onClick={refreshTeams}
-            className="rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-neutral-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
-          >
+      <section className="card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <h2 className="section-title" style={{ margin: 0 }}>Teams</h2>
+          <button onClick={refreshTeams} className="btn-ghost" style={{ padding: '4px 12px', fontSize: 13 }}>
             Refresh
           </button>
         </div>
 
-        <div className="mt-3">
-          {teamsError && (
-            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              {teamsError}
-            </div>
-          )}
-
-          <div className="relative mt-2 overflow-hidden rounded-xl border">
-            <div className="h-48 overflow-y-auto">
-              {teams === null ? (
-                <div className="p-4 text-sm text-neutral-400">
-                  Loading teams…
-                </div>
-              ) : teams.length === 0 ? (
-                <div className="p-4 text-sm text-neutral-600">
-                  No teams yet. Click <b>+ Create New Team</b> to add one.
-                </div>
-              ) : (
-                <ul className="divide-y">
-                  {teams.map((t) => {
-                    const active = t.id === effectiveTeamId;
-                    return (
-                      <li
-                        key={t.id}
-                        className={`flex items-center justify-between p-3 ${
-                          active
-                            ? 'bg-blue-50 dark:bg-blue-950/30'
-                            : 'bg-white dark:bg-gray-900'
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">
-                            {t.name}
-                          </p>
-                          <p className="truncate text-xs text-neutral-500">
-                            ID: {t.id}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {active ? (
-                            <span className="rounded-md bg-blue-600 px-2 py-1 text-xs text-white">
-                              Active
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => handlePickTeam(t)}
-                              className="rounded-md border px-2 py-1 text-xs hover:bg-neutral-50 dark:border-gray-700 dark:hover:bg-gray-800"
-                            >
-                              Use This
-                            </button>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+        {teamsError && (
+          <div style={{ borderRadius: 8, border: '1px solid var(--danger)', background: 'var(--danger-soft)', padding: '8px 12px', fontSize: 13, color: 'var(--danger)', marginBottom: 10 }}>
+            {teamsError}
           </div>
+        )}
 
-          <p className="mt-2 text-xs text-neutral-500">
-            Pick a team to view its saved availability and shift templates.
-          </p>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+          <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            {teams === null ? (
+              <div style={{ padding: 16, fontSize: 13, color: 'var(--text-3)' }}>Loading teams…</div>
+            ) : teams.length === 0 ? (
+              <div style={{ padding: 16, fontSize: 13, color: 'var(--text-2)' }}>
+                No teams yet. Click <b>+ New Team</b> to add one.
+              </div>
+            ) : (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                {teams.map((t) => {
+                  const active = t.id === effectiveTeamId;
+                  return (
+                    <li
+                      key={t.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 14px',
+                        borderBottom: '1px solid var(--border)',
+                        background: active ? 'var(--accent-soft)' : 'var(--surface)',
+                      }}
+                    >
+                      <div>
+                        <p style={{ fontSize: 14, fontWeight: 500, color: active ? 'var(--accent-text)' : 'var(--text)' }}>{t.name}</p>
+                        <p style={{ fontSize: 11, color: 'var(--text-3)' }}>ID: {t.id}</p>
+                      </div>
+                      {active ? (
+                        <span className="badge badge-accent">Active</span>
+                      ) : (
+                        <button onClick={() => handlePickTeam(t)} className="btn-ghost" style={{ padding: '3px 10px', fontSize: 12 }}>
+                          Select
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
+        <p style={{ marginTop: 8, fontSize: 12, color: 'var(--text-3)' }}>
+          Select a team to view its availability and shift templates.
+        </p>
       </section>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Team Availability (read-only) */}
-        <section className="rounded-2xl border p-5">
-          <h2 className="mb-2 text-lg font-semibold">Team Availability</h2>
-          <p className="mb-4 text-sm text-neutral-600">
-            Read-only view of saved availability for this team.
+      {/* Tables */}
+      <div style={{ display: 'grid', gap: 20, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+        {/* Availability */}
+        <section className="card">
+          <h2 className="section-title">Team Availability</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: -8, marginBottom: 14 }}>
+            Read-only view of saved availability.
           </p>
-
           {availabilityRows && availabilityRows.length > 0 ? (
-            <div className="relative mt-2 rounded-lg border border-neutral-200 bg-white shadow-md dark:border-gray-700 dark:bg-gray-900">
-              <div className="h-80 overflow-x-auto overflow-y-auto">
-                <table className="w-full min-w-[1100px] table text-left text-sm text-gray-500 dark:text-gray-300">
-                  <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-700">
-                    <tr className="text-xs uppercase text-gray-700 dark:text-gray-300">
+            <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ maxHeight: 320, overflowX: 'auto', overflowY: 'auto' }}>
+                <table style={{ width: '100%', minWidth: 1100, fontSize: 13, borderCollapse: 'collapse' }}>
+                  <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--elevated)' }}>
+                    <tr>
                       {Object.keys(availabilityRows[0]).map((key) => (
-                        <th
-                          key={key}
-                          className={
-                            key === 'Name'
-                              ? 'whitespace-nowrap px-3 py-2 font-medium min-w-[220px]'
-                              : key === 'Notes'
-                                ? 'whitespace-nowrap px-3 py-2 font-medium min-w-[260px]'
-                                : 'whitespace-nowrap px-3 py-2 font-medium min-w-[140px]'
-                          }
-                        >
+                        <th key={key} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', minWidth: key === 'Name' ? 180 : key === 'Notes' ? 220 : 120, borderBottom: '1px solid var(--border)' }}>
                           {key}
                         </th>
                       ))}
@@ -533,19 +562,10 @@ export default function TeamData({
                   </thead>
                   <tbody>
                     {availabilityRows.map((row, i) => (
-                      <tr key={i} className="border-t dark:border-gray-700">
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
                         {Object.keys(availabilityRows[0]).map((key) => (
-                          <td
-                            key={key}
-                            className={
-                              key === 'Name'
-                                ? 'px-3 py-2 align-top whitespace-nowrap min-w-[220px]'
-                                : key === 'Notes'
-                                  ? 'px-3 py-2 align-top whitespace-pre-line break-words min-w-[260px]'
-                                  : 'px-3 py-2 align-top whitespace-pre-line break-words min-w-[140px]'
-                            }
-                          >
-                            {row[key] == null || row[key] === "" ? "—" : String(row[key])}
+                          <td key={key} style={{ padding: '8px 12px', fontSize: 13, color: 'var(--text)', verticalAlign: 'top', whiteSpace: key === 'Name' ? 'nowrap' : 'pre-line', wordBreak: 'break-word' }}>
+                            {row[key] == null || row[key] === '' ? '—' : String(row[key])}
                           </td>
                         ))}
                       </tr>
@@ -553,49 +573,62 @@ export default function TeamData({
                   </tbody>
                 </table>
               </div>
-              <p className="p-2 text-right text-xs text-neutral-500">
-                Total: {availabilityRows.length} rows ×{' '}
-                {Object.keys(availabilityRows[0]).length} columns
+              <p style={{ padding: '6px 12px', fontSize: 11, color: 'var(--text-3)', textAlign: 'right', borderTop: '1px solid var(--border)' }}>
+                {availabilityRows.length} rows × {Object.keys(availabilityRows[0]).length} columns
               </p>
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed p-6 text-sm text-neutral-500">
+            <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 24, fontSize: 13, color: 'var(--text-3)', textAlign: 'center' }}>
               No availability saved for this team.
             </div>
           )}
         </section>
 
-        {/* Shift Requirements (read-only) */}
-        <section className="rounded-2xl border p-5">
-          <h2 className="mb-2 text-lg font-semibold">Shift Requirements</h2>
-          <p className="mb-4 text-sm text-neutral-600">
-            Read-only view of saved shift templates for this team.
+        {/* Shifts */}
+        <section className="card">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <h2 className="section-title" style={{ margin: 0 }}>Shift Requirements</h2>
+            {effectiveTeamId && (
+              <>
+                <input
+                  ref={shiftsUploadRef}
+                  type="file"
+                  accept=".csv"
+                  style={{ display: 'none' }}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadShifts(f); e.target.value = ''; }}
+                />
+                <button
+                  onClick={() => shiftsUploadRef.current?.click()}
+                  disabled={uploadingShifts}
+                  className="btn-ghost"
+                  style={{ padding: '4px 12px', fontSize: 13 }}
+                >
+                  {uploadingShifts ? 'Uploading…' : '📤 Upload CSV'}
+                </button>
+              </>
+            )}
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4, marginBottom: 14 }}>
+            Saved shift templates. Upload a CSV to update.
           </p>
-
-          {shiftsRows && shiftsRows.length > 0 ? (
-            <div className="relative mt-2 rounded-lg border border-neutral-200 bg-white shadow-md dark:border-gray-700 dark:bg-gray-900">
-              <div className="h-80 overflow-x-auto overflow-y-auto">
-                <table className="w-full min-w-[1100px] table-fixed text-left text-sm text-gray-500 dark:text-gray-300">
-                  <thead className="sticky top-0 z-10 bg-gray-50 text-xs uppercase text-gray-700 dark:bg-gray-700 dark:text-gray-400">
+          {shiftCsvRawRows && shiftCsvRawRows.length > 0 ? (
+            <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ maxHeight: 320, overflowX: 'auto', overflowY: 'auto' }}>
+                <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                  <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--elevated)' }}>
                     <tr>
-                      {Object.keys(shiftsRows[0]).map((k) => (
-                        <th
-                          key={k}
-                          className="whitespace-nowrap px-3 py-2 font-medium"
-                        >
+                      {Object.keys(shiftCsvRawRows[0]).map((k) => (
+                        <th key={k} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '1px solid var(--border)' }}>
                           {k}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {shiftsRows.map((r, i) => (
-                      <tr key={i} className="border-t dark:border-gray-700">
-                        {Object.keys(shiftsRows[0]).map((k) => (
-                          <td
-                            key={k}
-                            className="px-3 py-2 whitespace-pre-line break-words align-top"
-                          >
+                    {shiftCsvRawRows.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                        {Object.keys(shiftCsvRawRows[0]).map((k) => (
+                          <td key={k} style={{ padding: '8px 12px', fontSize: 13, color: 'var(--text)', verticalAlign: 'top', whiteSpace: 'pre-line', wordBreak: 'break-word' }}>
                             {String(r[k] ?? '')}
                           </td>
                         ))}
@@ -604,41 +637,34 @@ export default function TeamData({
                   </tbody>
                 </table>
               </div>
-              <p className="p-2 text-right text-xs text-neutral-500">
-                Total: {shiftsRows.length} rows ×{' '}
-                {Object.keys(shiftsRows[0]).length} columns
+              <p style={{ padding: '6px 12px', fontSize: 11, color: 'var(--text-3)', textAlign: 'right', borderTop: '1px solid var(--border)' }}>
+                {shiftCsvRawRows.length} rows × {Object.keys(shiftCsvRawRows[0]).length} columns
               </p>
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed p-6 text-sm text-neutral-500">
-              No shift templates saved for this team.
+            <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: 24, fontSize: 13, color: 'var(--text-3)', textAlign: 'center' }}>
+              Upload a CSV file to view shift requirements.
             </div>
           )}
         </section>
       </div>
 
-      {/* Status */}
-      <section className="rounded-2xl border p-5">
-        <h3 className="mb-3 text-base font-semibold">📊 Current Data Status</h3>
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl border p-3">
-            <p className="text-sm">Availability</p>
-            <p className="text-sm text-neutral-600">
-              {availabilityRows ? `✅ ${availabilityCount} people` : '⚠️ None'}
-            </p>
-          </div>
-          <div className="rounded-xl border p-3">
-            <p className="text-sm">Shifts</p>
-            <p className="text-sm text-neutral-600">
-              {shiftsRows ? `✅ ${shiftsCount} shifts` : '⚠️ None'}
-            </p>
-          </div>
-          <div className="rounded-xl border p-3">
-            <p className="text-sm">Team</p>
-            <p className="text-sm text-neutral-600">
-              {effectiveTeamName ?? '—'}
-            </p>
-          </div>
+      {/* Status summary */}
+      <section className="card">
+        <h3 className="section-title">Data Status</h3>
+        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+          {[
+            { label: 'Availability', value: availabilityRows ? `${availabilityCount} people` : 'None', ok: !!availabilityRows },
+            { label: 'Shifts', value: shiftCsvRawRows ? `${shiftsCount} rows` : 'Not uploaded', ok: !!shiftCsvRawRows },
+            { label: 'Team', value: effectiveTeamName ?? '—', ok: !!effectiveTeamName },
+          ].map((stat) => (
+            <div key={stat.label} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px', background: 'var(--elevated)' }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{stat.label}</p>
+              <p style={{ fontSize: 14, fontWeight: 500, color: stat.ok ? 'var(--success)' : 'var(--text-3)' }}>
+                {stat.ok ? '✓ ' : ''}{stat.value}
+              </p>
+            </div>
+          ))}
         </div>
       </section>
     </div>

@@ -127,7 +127,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     const body = await req.json().catch(() => ({} as any));
     const templatesBody = Array.isArray(body?.templates) ? body.templates : [];
-    const useCsv = body?.source === "csv" || templatesBody.length === 0;
+    const useCsv = body?.source === "csv";
 
     // wipe templates first (same behavior you had)
     await prisma.shiftTemplate.deleteMany({ where: { teamId } });

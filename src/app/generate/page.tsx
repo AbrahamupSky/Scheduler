@@ -125,6 +125,8 @@ export default function AIScheduleGenerator() {
 
   const shiftsFileRef = useRef<HTMLInputElement>(null);
   const availFileRef = useRef<HTMLInputElement>(null);
+  // AbortController ref — cancelled whenever a CSV is uploaded or team changes
+  const teamFetchAbort = useRef<AbortController | null>(null);
 
   const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') ?? '' : '';
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
@@ -145,17 +147,26 @@ export default function AIScheduleGenerator() {
   /* ── Load team data when team changes ── */
   useEffect(() => {
     if (!teamId) return;
+
+    // Cancel any in-flight fetch from a previous team or previous load
+    teamFetchAbort.current?.abort();
+    const ctrl = new AbortController();
+    teamFetchAbort.current = ctrl;
+
+    // Switching team always resets CSV overrides
+    setShiftsSource('api');
+    setAvailSource('api');
     setLoading(true);
     setError(null);
     setAIResult(null);
     setSavedId(null);
 
     Promise.all([
-      fetch(`/api/teams/${teamId}/availability`, { headers: authHeaders }).then(r => r.json()),
-      fetch(`/api/teams/${teamId}/shifts`, { headers: authHeaders }).then(r => r.json()),
+      fetch(`/api/teams/${teamId}/availability`, { headers: authHeaders, signal: ctrl.signal }).then(r => r.json()),
+      fetch(`/api/teams/${teamId}/shifts`, { headers: authHeaders, signal: ctrl.signal }).then(r => r.json()),
     ])
       .then(([avail, shiftsData]) => {
-        // Build member availability map
+        if (ctrl.signal.aborted) return; // CSV was uploaded while we were fetching — don't overwrite
         const memberMap = new Map<number, MemberAvailability>();
         if (Array.isArray(avail?.members)) {
           for (const m of avail.members) {
@@ -171,8 +182,8 @@ export default function AIScheduleGenerator() {
         setMembers(Array.from(memberMap.values()));
         setTemplates(Array.isArray(shiftsData?.templates) ? shiftsData.templates : []);
       })
-      .catch(e => setError('Error loading team data.'))
-      .finally(() => setLoading(false));
+      .catch(e => { if (!ctrl.signal.aborted) setError('Error loading team data.'); })
+      .finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
   }, [teamId]);
 
   /* ── CSV helpers ── */
@@ -195,6 +206,10 @@ export default function AIScheduleGenerator() {
   };
 
   function parseShiftsCsv(file: File) {
+    // Cancel any in-flight API fetch so it can't overwrite our CSV data
+    teamFetchAbort.current?.abort();
+    setLoading(false);
+
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -220,6 +235,10 @@ export default function AIScheduleGenerator() {
   }
 
   function parseAvailabilityCsv(file: File) {
+    // Cancel any in-flight API fetch so it can't overwrite our CSV data
+    teamFetchAbort.current?.abort();
+    setLoading(false);
+
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -348,11 +367,11 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 }`;
 
     try {
-      const response = await fetch('/api/minimax/chat/completions', {
+      const response = await fetch('/api/anthropic/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'MiniMax-Text-01',
+          model: 'claude-sonnet-4-6',
           max_tokens: 8000,
           messages: [{ role: 'user', content: prompt }],
         }),
@@ -365,17 +384,17 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
       }
 
       const data = await response.json();
-      const text: string = data.choices?.[0]?.message?.content ?? '';
+      const text: string = data.content?.[0]?.text ?? '';
 
       try {
         const clean = text.replace(/```json\n?|```/g, '').trim();
         const result: AIScheduleResult = JSON.parse(clean);
         setAIResult(result);
       } catch {
-        setError('The model returned invalid JSON. Please try again.');
+        setError('The AI returned invalid JSON. Please try again.');
       }
     } catch (e) {
-      setError('Error communicating with MiniMax: ' + (e instanceof Error ? e.message : 'Unknown error'));
+      setError('Error communicating with Claude: ' + (e instanceof Error ? e.message : 'Unknown error'));
     } finally {
       setGenerating(false);
     }
@@ -444,19 +463,13 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
   /* ─────────────────────────── Render ─────────────────────────── */
   return (
-    <div style={{
-      fontFamily: "'DM Sans', 'Helvetica Neue', sans-serif",
-      background: '#0f1117',
-      minHeight: '100vh',
-      color: '#e8e8f0',
-      padding: '24px',
-    }}>
+    <div>
       {/* Header */}
       <div style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
           <div style={{
             width: 40, height: 40, borderRadius: 10,
-            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+            background: 'var(--accent)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 20,
           }}>🧠</div>
@@ -464,7 +477,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
             <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: '-0.5px' }}>
               Generate Schedule
             </h1>
-            <p style={{ fontSize: 13, color: '#6b7280', margin: 0 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0 }}>
               Smart Scheduler
             </p>
           </div>
@@ -473,8 +486,8 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
       {/* Config Panel */}
       <div style={{
-        background: '#1a1d2e',
-        border: '1px solid #2d3148',
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
         borderRadius: 16,
         padding: 24,
         marginBottom: 24,
@@ -482,7 +495,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 16, alignItems: 'end' }}>
           {/* Team */}
           <div>
-            <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+            <label style={{ fontSize: 12, color: 'var(--text-2)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
               Team
             </label>
             <select
@@ -491,8 +504,8 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
               disabled={generating}
               style={{
                 width: '100%', padding: '10px 14px', borderRadius: 10,
-                background: '#0f1117', border: '1px solid #2d3148',
-                color: '#e8e8f0', fontSize: 14, cursor: 'pointer',
+                background: 'var(--bg)', border: '1px solid var(--border)',
+                color: 'var(--text)', fontSize: 14, cursor: 'pointer',
               }}
             >
               {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -501,7 +514,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
           {/* Week start (Sunday) */}
           <div>
-            <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+            <label style={{ fontSize: 12, color: 'var(--text-2)', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
               Week Starting (Sunday)
             </label>
             <input
@@ -511,28 +524,28 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
               disabled={generating}
               style={{
                 width: '100%', padding: '10px 14px', borderRadius: 10,
-                background: '#0f1117', border: '1px solid #2d3148',
-                color: '#e8e8f0', fontSize: 14,
+                background: 'var(--bg)', border: '1px solid var(--border)',
+                color: 'var(--text)', fontSize: 14,
               }}
             />
           </div>
 
           {/* Info */}
           <div style={{ paddingBottom: 2 }}>
-            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
               Info
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <span style={{
-                background: members.length ? '#14532d' : '#3f1515',
-                color: members.length ? '#86efac' : '#fca5a5',
+                background: members.length ? 'var(--success-soft)' : 'var(--danger-soft)',
+                color: members.length ? 'var(--success)' : 'var(--danger)',
                 padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600,
               }}>
                 👥 {members.length} employees
               </span>
               <span style={{
-                background: templates.length ? '#1e3a5f' : '#3f1515',
-                color: templates.length ? '#93c5fd' : '#fca5a5',
+                background: templates.length ? 'var(--accent-soft)' : 'var(--danger-soft)',
+                color: templates.length ? 'var(--accent-text)' : 'var(--danger)',
                 padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600,
               }}>
                 📋 {templates.length} shifts
@@ -547,8 +560,8 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
             style={{
               padding: '12px 28px',
               background: generating
-                ? '#3d3f6a'
-                : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                ? 'var(--elevated)'
+                : 'var(--accent)',
               color: '#fff',
               border: 'none',
               borderRadius: 10,
@@ -570,7 +583,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
         </div>
 
         {loading && (
-          <div style={{ marginTop: 16, fontSize: 13, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ marginTop: 16, fontSize: 13, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ animation: 'pulse 1.5s ease infinite' }}>●</span> Loading team data...
           </div>
         )}
@@ -578,10 +591,10 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
       {/* CSV Upload Panel */}
       <div style={{
-        background: '#1a1d2e', border: '1px solid #2d3148',
+        background: 'var(--surface)', border: '1px solid var(--border)',
         borderRadius: 16, padding: 20, marginBottom: 24,
       }}>
-        <div style={{ fontSize: 12, color: '#6b7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 14 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 14 }}>
           CSV Override (optional)
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -599,15 +612,15 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
               onClick={() => shiftsFileRef.current?.click()}
               style={{
                 width: '100%', padding: '12px 16px', borderRadius: 10,
-                background: shiftsSource === 'csv' ? '#14532d' : '#0f1117',
-                border: `1px dashed ${shiftsSource === 'csv' ? '#166534' : '#3d4068'}`,
-                color: shiftsSource === 'csv' ? '#86efac' : '#6b7280',
+                background: shiftsSource === 'csv' ? 'var(--success-soft)' : 'var(--elevated)',
+                border: `1px dashed ${shiftsSource === 'csv' ? 'var(--success)' : 'var(--border)'}`,
+                color: shiftsSource === 'csv' ? 'var(--success)' : 'var(--text-2)',
                 fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
               }}
             >
               📄 {shiftsSource === 'csv' ? `Shifts loaded from CSV (${templates.length} shifts) ✓` : 'Upload Shift Requirements CSV'}
             </button>
-            <div style={{ fontSize: 11, color: '#4b5563', marginTop: 5 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 5 }}>
               Columns: Shift, Job_Type, Day, Start_Time, End_Time, Required
             </div>
           </div>
@@ -625,15 +638,15 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
               onClick={() => availFileRef.current?.click()}
               style={{
                 width: '100%', padding: '12px 16px', borderRadius: 10,
-                background: availSource === 'csv' ? '#14532d' : '#0f1117',
-                border: `1px dashed ${availSource === 'csv' ? '#166534' : '#3d4068'}`,
-                color: availSource === 'csv' ? '#86efac' : '#6b7280',
+                background: availSource === 'csv' ? 'var(--success-soft)' : 'var(--elevated)',
+                border: `1px dashed ${availSource === 'csv' ? 'var(--success)' : 'var(--border)'}`,
+                color: availSource === 'csv' ? 'var(--success)' : 'var(--text-2)',
                 fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
               }}
             >
               👥 {availSource === 'csv' ? `Availability loaded from CSV (${members.length} employees) ✓` : 'Upload Availability CSV'}
             </button>
-            <div style={{ fontSize: 11, color: '#4b5563', marginTop: 5 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 5 }}>
               Columns: Name, Job, Position, Leadership, Min Hours, Max Hours, {'{Day}'} Start, {'{Day}'} End
             </div>
           </div>
@@ -643,9 +656,9 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
       {error && (
         <div style={{
-          background: '#3f1515', border: '1px solid #7f1d1d',
+          background: 'var(--danger-soft)', border: '1px solid var(--danger)',
           borderRadius: 12, padding: '14px 18px', marginBottom: 20,
-          color: '#fca5a5', fontSize: 14,
+          color: 'var(--danger)', fontSize: 14,
         }}>
           ⚠️ {error}
         </div>
@@ -654,20 +667,20 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
       {/* Generating animation */}
       {generating && (
         <div style={{
-          background: '#1a1d2e', border: '1px solid #2d3148',
+          background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 16, padding: 32, marginBottom: 24, textAlign: 'center',
         }}>
           <div style={{ fontSize: 40, marginBottom: 16 }}>🧠</div>
           <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
             Building schedule from availability and shift templates...
           </p>
-          <p style={{ fontSize: 13, color: '#6b7280' }}>
+          <p style={{ fontSize: 13, color: 'var(--text-2)' }}>
             Balancing {members.length} employees across {templates.length} shifts for Mon–Sat
           </p>
-          <div style={{ marginTop: 20, height: 4, background: '#2d3148', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{ marginTop: 20, height: 4, background: 'var(--elevated)', borderRadius: 2, overflow: 'hidden' }}>
             <div style={{
               height: '100%', width: '40%',
-              background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+              background: 'var(--accent)',
               borderRadius: 2,
               animation: 'loading 1.5s ease-in-out infinite',
             }} />
@@ -687,9 +700,9 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                   onClick={() => setActiveTab(tab)}
                   style={{
                     padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-                    background: activeTab === tab ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : '#1a1d2e',
-                    color: activeTab === tab ? '#fff' : '#6b7280',
-                    border: activeTab === tab ? 'none' : '1px solid #2d3148',
+                    background: activeTab === tab ? 'var(--accent)' : 'var(--elevated)',
+                    color: activeTab === tab ? '#fff' : 'var(--text-2)',
+                    border: activeTab === tab ? 'none' : '1px solid var(--border)',
                     cursor: 'pointer',
                   }}
                 >
@@ -700,7 +713,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               {savedId && (
-                <span style={{ fontSize: 13, color: '#86efac', background: '#14532d', padding: '6px 12px', borderRadius: 8 }}>
+                <span style={{ fontSize: 13, color: 'var(--success)', background: 'var(--success-soft)', padding: '6px 12px', borderRadius: 8 }}>
                   ✓ Saved #{savedId}
                 </span>
               )}
@@ -709,10 +722,10 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                 disabled={savingSchedule || !!savedId}
                 style={{
                   padding: '9px 20px',
-                  background: savedId ? '#1a1d2e' : '#14532d',
-                  color: savedId ? '#4b5563' : '#86efac',
+                  background: savedId ? 'var(--elevated)' : 'var(--success-soft)',
+                  color: savedId ? 'var(--text-3)' : 'var(--success)',
                   border: '1px solid',
-                  borderColor: savedId ? '#2d3148' : '#166534',
+                  borderColor: savedId ? 'var(--border)' : 'var(--success)',
                   borderRadius: 8, fontSize: 13, fontWeight: 600,
                   cursor: savedId ? 'default' : 'pointer',
                 }}
@@ -724,25 +737,25 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
           {/* Summary bar */}
           <div style={{
-            background: '#1a1d2e', border: '1px solid #2d3148',
+            background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 12, padding: '14px 20px', marginBottom: 20,
             display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center',
           }}>
-            <div style={{ fontSize: 13, color: '#a5b4fc', flex: 1 }}>
+            <div style={{ fontSize: 13, color: 'var(--accent)', flex: 1 }}>
               💬 {aiResult.summary}
             </div>
             <div style={{ display: 'flex', gap: 16 }}>
               <span style={{ fontSize: 13 }}>
-                <span style={{ color: '#6b7280' }}>Total shifts:</span>{' '}
-                <b style={{ color: '#e8e8f0' }}>{aiResult.stats.totalShifts}</b>
+                <span style={{ color: 'var(--text-2)' }}>Total shifts:</span>{' '}
+                <b style={{ color: 'var(--text)' }}>{aiResult.stats.totalShifts}</b>
               </span>
               <span style={{ fontSize: 13 }}>
                 <span style={{ color: '#22c55e' }}>✓</span>{' '}
-                <b style={{ color: '#e8e8f0' }}>{aiResult.stats.fullyStaffed}</b>
+                <b style={{ color: 'var(--text)' }}>{aiResult.stats.fullyStaffed}</b>
               </span>
               <span style={{ fontSize: 13 }}>
                 <span style={{ color: '#ef4444' }}>⚠</span>{' '}
-                <b style={{ color: '#e8e8f0' }}>{aiResult.stats.understaffed}</b>
+                <b style={{ color: 'var(--text)' }}>{aiResult.stats.understaffed}</b>
               </span>
             </div>
           </div>
@@ -750,11 +763,11 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
           {/* Warnings */}
           {aiResult.warnings.length > 0 && (
             <div style={{
-              background: '#2d1f0e', border: '1px solid #78350f',
+              background: 'color-mix(in srgb, #f59e0b 12%, transparent)', border: '1px solid #d97706',
               borderRadius: 12, padding: '12px 18px', marginBottom: 16,
             }}>
               {aiResult.warnings.map((w, i) => (
-                <div key={i} style={{ fontSize: 13, color: '#fcd34d', marginBottom: i < aiResult.warnings.length - 1 ? 4 : 0 }}>
+                <div key={i} style={{ fontSize: 13, color: '#d97706', marginBottom: i < aiResult.warnings.length - 1 ? 4 : 0 }}>
                   ⚠ {w}
                 </div>
               ))}
@@ -771,22 +784,22 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
                 return (
                   <div key={dayName} style={{
-                    background: '#1a1d2e', border: '1px solid #2d3148',
+                    background: 'var(--surface)', border: '1px solid var(--border)',
                     borderRadius: 14, marginBottom: 16, overflow: 'hidden',
                   }}>
                     {/* Day header */}
                     <div style={{
                       padding: '14px 20px',
-                      background: 'linear-gradient(90deg, #1e2235, #1a1d2e)',
-                      borderBottom: '1px solid #2d3148',
+                      background: 'var(--elevated)',
+                      borderBottom: '1px solid var(--border)',
                       display: 'flex', alignItems: 'center', gap: 12,
                     }}>
-                      <span style={{ fontSize: 16, fontWeight: 700, color: '#a5b4fc' }}>{dayName}</span>
-                      <span style={{ fontSize: 13, color: '#4b5563' }}>{dateStr}</span>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>{dayName}</span>
+                      <span style={{ fontSize: 13, color: 'var(--text-3)' }}>{dateStr}</span>
                       <span style={{
                         marginLeft: 'auto', fontSize: 12,
-                        background: '#0f1117', padding: '3px 10px', borderRadius: 20,
-                        color: '#6b7280',
+                        background: 'var(--bg)', padding: '3px 10px', borderRadius: 20,
+                        color: 'var(--text-2)',
                       }}>
                         {dayEntries.length} shifts
                       </span>
@@ -801,8 +814,8 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
                         return (
                           <div key={i} style={{
-                            background: '#0f1117',
-                            border: `1px solid #2d3148`,
+                            background: 'var(--bg)',
+                            border: `1px solid var(--border)`,
                             borderLeft: `3px solid ${color}`,
                             borderRadius: 10,
                             padding: '12px 16px',
@@ -816,22 +829,18 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                                 <span style={{
                                   fontSize: 12, fontWeight: 700, padding: '2px 8px',
                                   borderRadius: 6,
-                                  background: entry.jobType === 'FOH' ? '#1e3a5f' :
-                                    entry.jobType === 'BOH' ? '#1a2e1a' :
-                                    entry.jobType === 'TRUCK' ? '#2d1f0e' : '#2d1442',
-                                  color: entry.jobType === 'FOH' ? '#93c5fd' :
-                                    entry.jobType === 'BOH' ? '#86efac' :
-                                    entry.jobType === 'TRUCK' ? '#fcd34d' : '#d8b4fe',
+                                  background: 'var(--accent-soft)',
+                                  color: 'var(--accent-text)',
                                 }}>
                                   {entry.jobType}
                                 </span>
-                                <span style={{ fontSize: 14, fontWeight: 600, color: '#e8e8f0' }}>
+                                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
                                   {entry.shift}
                                 </span>
-                                <span style={{ fontSize: 13, color: '#6b7280' }}>
+                                <span style={{ fontSize: 13, color: 'var(--text-2)' }}>
                                   {entry.startTime} – {entry.endTime}
                                 </span>
-                                <span style={{ fontSize: 12, color: '#6b7280' }}>
+                                <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
                                   ({shiftHours(entry.startTime, entry.endTime).toFixed(1)}h)
                                 </span>
                               </div>
@@ -840,8 +849,8 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                                 {entry.assigned.map((name, j) => (
                                   <span key={j} style={{
                                     fontSize: 12, padding: '3px 10px', borderRadius: 20,
-                                    background: '#1a1d2e', border: '1px solid #2d3148',
-                                    color: '#c4c9e8',
+                                    background: 'var(--surface)', border: '1px solid var(--border)',
+                                    color: 'var(--text)',
                                   }}>
                                     {name}
                                   </span>
@@ -849,8 +858,8 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                                 {Array.from({ length: Math.max(0, needed - filled) }).map((_, j) => (
                                   <span key={`empty-${j}`} style={{
                                     fontSize: 12, padding: '3px 10px', borderRadius: 20,
-                                    background: '#3f1515', border: '1px dashed #7f1d1d',
-                                    color: '#fca5a5',
+                                    background: 'var(--danger-soft)', border: '1px dashed var(--danger)',
+                                    color: 'var(--danger)',
                                   }}>
                                     Unassigned
                                   </span>
@@ -871,7 +880,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                               }}>
                                 {filled}/{needed}
                               </div>
-                              <div style={{ fontSize: 11, color: '#4b5563' }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
                                 {filled >= needed ? 'Complete' : 'Incomplete'}
                               </div>
                             </div>
@@ -890,7 +899,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
               {/* Hours per employee */}
               <div style={{
-                background: '#1a1d2e', border: '1px solid #2d3148',
+                background: 'var(--surface)', border: '1px solid var(--border)',
                 borderRadius: 14, padding: 20,
               }}>
                 <h3 style={{ margin: '0 0 16px 0', fontSize: 15, fontWeight: 700 }}>
@@ -910,7 +919,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                           <span>{name}</span>
                           <span style={{ color: barColor, fontWeight: 700 }}>{hours}h / {max}h</span>
                         </div>
-                        <div style={{ height: 6, background: '#2d3148', borderRadius: 3 }}>
+                        <div style={{ height: 6, background: 'var(--elevated)', borderRadius: 3 }}>
                           <div style={{
                             height: '100%', width: `${pct}%`,
                             background: barColor, borderRadius: 3,
@@ -924,7 +933,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
 
               {/* Coverage summary */}
               <div style={{
-                background: '#1a1d2e', border: '1px solid #2d3148',
+                background: 'var(--surface)', border: '1px solid var(--border)',
                 borderRadius: 14, padding: 20,
               }}>
                 <h3 style={{ margin: '0 0 16px 0', fontSize: 15, fontWeight: 700 }}>
@@ -943,7 +952,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                         <span>{day}</span>
                         <span style={{ color, fontWeight: 700 }}>{filled}/{total} slots ({pct}%)</span>
                       </div>
-                      <div style={{ height: 6, background: '#2d3148', borderRadius: 3 }}>
+                      <div style={{ height: 6, background: 'var(--elevated)', borderRadius: 3 }}>
                         <div style={{
                           height: '100%', width: `${pct}%`,
                           background: color, borderRadius: 3,
@@ -953,13 +962,13 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
                   );
                 })}
 
-                <div style={{ marginTop: 20, padding: '12px 16px', background: '#0f1117', borderRadius: 10 }}>
+                <div style={{ marginTop: 20, padding: '12px 16px', background: 'var(--bg)', borderRadius: 10 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-                    <span style={{ color: '#6b7280' }}>Complete shifts</span>
+                    <span style={{ color: 'var(--text-2)' }}>Complete shifts</span>
                     <span style={{ color: '#22c55e', fontWeight: 700 }}>{aiResult.stats.fullyStaffed}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                    <span style={{ color: '#6b7280' }}>Incomplete shifts</span>
+                    <span style={{ color: 'var(--text-2)' }}>Incomplete shifts</span>
                     <span style={{ color: '#ef4444', fontWeight: 700 }}>{aiResult.stats.understaffed}</span>
                   </div>
                 </div>
@@ -970,10 +979,10 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
           {/* Raw JSON Tab */}
           {activeTab === 'raw' && (
             <div style={{
-              background: '#0f1117', border: '1px solid #2d3148',
+              background: 'var(--bg)', border: '1px solid var(--border)',
               borderRadius: 14, padding: 20, overflow: 'auto', maxHeight: 500,
             }}>
-              <pre style={{ fontSize: 12, color: '#a5b4fc', margin: 0, whiteSpace: 'pre-wrap' }}>
+              <pre style={{ fontSize: 12, color: 'var(--accent)', margin: 0, whiteSpace: 'pre-wrap' }}>
                 {JSON.stringify(aiResult, null, 2)}
               </pre>
             </div>
@@ -984,16 +993,16 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
       {/* Empty state */}
       {!aiResult && !generating && !error && (
         <div style={{
-          background: '#1a1d2e', border: '1px dashed #2d3148',
+          background: 'var(--surface)', border: '1px dashed var(--border)',
           borderRadius: 16, padding: 48, textAlign: 'center',
         }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>🗓️</div>
           <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
             Ready to generate your schedule!
           </p>
-          <p style={{ fontSize: 14, color: '#6b7280' }}>
+          <p style={{ fontSize: 14, color: 'var(--text-2)' }}>
             Select a team with availability and shifts loaded, then press{' '}
-            <strong style={{ color: '#a5b4fc' }}>⚡ Generate Schedule</strong>
+            <strong style={{ color: 'var(--accent)' }}>⚡ Generate Schedule</strong>
           </p>
         </div>
       )}
@@ -1006,7 +1015,7 @@ OUTPUT: Respond ONLY with valid JSON — no markdown fences, no explanation, not
           50% { transform: translateX(150%); }
           100% { transform: translateX(-100%); }
         }
-        select option { background: #0f1117; }
+        select option { background: var(--bg); }
       `}</style>
     </div>
   );

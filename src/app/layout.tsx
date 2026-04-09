@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
-import Script from 'next/script';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -18,16 +17,25 @@ export const metadata: Metadata = {
   description: 'Auto Scheduler',
 };
 
+// Runs before React hydrates — no flash of wrong theme
+const themeScript = `(function(){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(dark){
+    document.documentElement.classList.toggle('dark',dark);
+  }
+  apply(mq.matches);
+  mq.addEventListener('change',function(e){apply(e.matches);});
+})();`;
+
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
       </body>
     </html>

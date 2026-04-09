@@ -125,3 +125,33 @@ export async function PUT(
 ) {
   return PATCH(req, ctx);
 }
+
+/* ------------------------------- DELETE (team) ---------------------------- */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const user = await requireUser(req);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { id } = await params;
+    const teamId = Number(id);
+    if (!Number.isFinite(teamId)) {
+      return NextResponse.json({ error: "Invalid team id" }, { status: 400 });
+    }
+
+    const team = await prisma.team.findFirst({
+      where: { id: teamId, ownerId: user.id },
+      select: { id: true },
+    });
+    if (!team) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    await prisma.team.delete({ where: { id: teamId } });
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/teams/[id] error", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}

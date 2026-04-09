@@ -174,16 +174,12 @@ export async function POST(
     const mode = body?.mode === 'update_week' ? 'update_week' : 'replace_all';
 
     // Decide mode:
-    // - explicit { source: "csv" }
-    // - OR fallback if windows are missing/empty
+    // - explicit { source: "csv" } → load from /data/Availability.csv
+    // - otherwise → use members + windows from request body
     const membersBody = Array.isArray(body?.members) ? body.members : [];
     const windowsBody = Array.isArray(body?.windows) ? body.windows : [];
 
-    const windowsHaveAnyTimes = windowsBody.some(
-      (w: any) => w?.startHHMM != null || w?.endHHMM != null,
-    );
-
-    const useCsv = body?.source === 'csv' || !windowsHaveAnyTimes;
+    const useCsv = body?.source === 'csv';
 
     // Always wipe windows (weekly availability refresh)
     await prisma.availabilityWindow.deleteMany({
