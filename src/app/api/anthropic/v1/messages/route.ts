@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'output-128k-2025-02-19',
     },
     body: JSON.stringify(body),
   });

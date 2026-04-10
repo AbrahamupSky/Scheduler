@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { loadShiftTemplates } from "@/app/lib/scheduler/loadShiftTemplates";
-import { loadAvailability } from "@/app/lib/scheduler/loadAvailability";
 import {
   canLeadLane,
   isShiftLeaderName,
@@ -71,17 +69,11 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Keep what your UI expects
-    const shiftTemplates = loadShiftTemplates();
-    const availability = loadAvailability();
-
     return NextResponse.json({
       schedule: {
         ...schedule,
         data: schedule.data,
       },
-      shiftTemplates,
-      availability,
     });
   } catch (err) {
     console.error("GET /api/schedules/[id] error:", err);

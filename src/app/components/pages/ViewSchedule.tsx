@@ -563,150 +563,112 @@ export default function SchedulesPage() {
                 </div>
               </div>
 
-              {/* Table */}
-              <div className="rounded-lg border overflow-hidden">
-                <div className="max-h-[520px] overflow-auto">
-                  <table className="min-w-[980px] w-full text-left text-sm">
-                    <thead className="sticky top-0 bg-gray-50 z-10">
-                      <tr className="text-xs uppercase text-gray-600">
-                        <th className="px-3 py-2">Date</th>
-                        <th className="px-3 py-2">Shift</th>
-                        <th className="px-3 py-2">Job</th>
-                        <th className="px-3 py-2">Time</th>
-                        <th className="px-3 py-2">Required</th>
-                        <th className="px-3 py-2">Assigned</th>
-                        <th className="px-3 py-2">Unfilled</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((r) => {
-                        const eligibleMembers = teamMembers.filter((m) =>
-                          memberCanBeAddedToShift(m, r),
-                        );
+              {/* Schedule — weekly grid */}
+              {rows.length === 0 ? (
+                <div style={{ border: '1px dashed var(--border)', borderRadius: 10, padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-3)' }}>
+                  No shifts found in this schedule.
+                </div>
+              ) : (() => {
+                // Group shifts by day key
+                const byDay = new Map<string, { date: string; weekday: string; shifts: typeof rows }>();
+                for (const r of rows) {
+                  const key = `${r.date}__${r.weekday}`;
+                  if (!byDay.has(key)) byDay.set(key, { date: r.date, weekday: r.weekday, shifts: [] });
+                  byDay.get(key)!.shifts.push(r);
+                }
+                const days = Array.from(byDay.values());
 
-                        return (
-                        <tr key={r.shiftId} className="border-t align-top">
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {r.date} ({r.weekday})
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {r.shiftName}
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {r.jobType ?? '—'}
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {r.startHHMM}–{r.endHHMM}
-                          </td>
-                          <td className="px-3 py-2">{r.required}</td>
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(days.length, 3)}, 1fr)`, gap: 12 }}>
+                    {days.map(({ date, weekday, shifts: dayRows }) => {
+                      const totalSlots = dayRows.reduce((s, r) => s + r.required, 0);
+                      const filledSlots = dayRows.reduce((s, r) => s + r.assigned.length, 0);
+                      const pct = totalSlots > 0 ? Math.round((filledSlots / totalSlots) * 100) : 100;
+                      const dayColor = pct >= 100 ? '#22c55e' : pct >= 60 ? '#f59e0b' : '#ef4444';
 
-                          {/* Assigned */}
-                          <td className="px-3 py-2">
-                            {!editMode ? (
-                              r.assigned.length ? (
-                                r.assigned.map((a) => a.name).join(', ')
-                              ) : (
-                                '—'
-                              )
-                            ) : (
-                              <div className="space-y-2">
-                                <div className="flex flex-wrap gap-1">
-                                  {r.assigned.length ? (
-                                    r.assigned.map((a) => (
-                                      <span
-                                        key={a.memberId}
-                                        className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs"
-                                      >
-                                        {a.name}
-                                        <button
-                                          className="text-red-600"
-                                          onClick={() =>
-                                            setDraft((d) =>
-                                              d
-                                                ? removeAssigned(
-                                                    d,
-                                                    r.shiftId,
-                                                    a.memberId,
-                                                  )
-                                                : d,
-                                            )
-                                          }
-                                          title="Remove"
-                                        >
-                                          ✕
-                                        </button>
-                                      </span>
-                                    ))
-                                  ) : (
-                                    <span className="text-xs text-neutral-500">
-                                      —
-                                    </span>
+                      return (
+                        <div key={`${date}__${weekday}`} style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                          {/* Day header */}
+                          <div style={{ background: 'var(--elevated)', padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div>
+                              <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>{weekday}</span>
+                              <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 6 }}>{date}</span>
+                            </div>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: dayColor, background: `${dayColor}18`, padding: '2px 8px', borderRadius: 20 }}>
+                              {filledSlots}/{totalSlots}
+                            </span>
+                          </div>
+
+                          {/* Shift cards */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: 'var(--border)', flex: 1 }}>
+                            {dayRows.map((r) => {
+                              const filled = r.assigned.length;
+                              const needed = r.required;
+                              const sc = filled >= needed ? '#22c55e' : filled > 0 ? '#f59e0b' : '#ef4444';
+                              const eligibleMembers = teamMembers.filter((m) => memberCanBeAddedToShift(m, r));
+
+                              return (
+                                <div key={r.shiftId} style={{ background: 'var(--surface)', padding: '8px 10px', borderLeft: `3px solid ${sc}` }}>
+                                  {/* Shift header row */}
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                                      {r.jobType && (
+                                        <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'var(--accent-soft)', color: 'var(--accent-text)', textTransform: 'uppercase', flexShrink: 0 }}>
+                                          {r.jobType}
+                                        </span>
+                                      )}
+                                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.shiftName}</span>
+                                    </div>
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: sc, flexShrink: 0, marginLeft: 4 }}>{filled}/{needed}</span>
+                                  </div>
+                                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>{r.startHHMM} – {r.endHHMM}</div>
+
+                                  {/* Assigned names */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                    {r.assigned.map((a) => (
+                                      <div key={a.memberId} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--elevated)', color: 'var(--text)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                                        {editMode && (
+                                          <button onClick={() => setDraft((d) => d ? removeAssigned(d, r.shiftId, a.memberId) : d)} style={{ fontSize: 10, color: 'var(--danger)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 0 4px', flexShrink: 0 }}>✕</button>
+                                        )}
+                                      </div>
+                                    ))}
+                                    {Array.from({ length: Math.max(0, needed - filled) }).map((_, j) => (
+                                      <div key={`empty-${j}`} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--danger-soft)', color: 'var(--danger)', border: '1px dashed var(--danger)' }}>
+                                        Unassigned
+                                      </div>
+                                    ))}
+                                    {filled === 0 && needed === 0 && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>—</span>}
+                                  </div>
+
+                                  {/* Edit mode: add member */}
+                                  {editMode && (
+                                    <select
+                                      defaultValue=""
+                                      onChange={(e) => {
+                                        const id = Number(e.target.value);
+                                        const m = eligibleMembers.find((x) => x.id === id);
+                                        if (!m) return;
+                                        setDraft((d) => d ? addAssigned(d, r.shiftId, m) : d);
+                                        e.currentTarget.value = '';
+                                      }}
+                                      disabled={eligibleMembers.length === 0}
+                                      style={{ marginTop: 6, width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                                    >
+                                      <option value="">+ Add…</option>
+                                      {eligibleMembers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                    </select>
                                   )}
                                 </div>
-
-                                <select
-                                  className="w-full rounded-lg border p-2 text-sm"
-                                  defaultValue=""
-                                  onChange={(e) => {
-                                    const id = Number(e.target.value);
-                                    const m = eligibleMembers.find(
-                                      (x) => x.id === id,
-                                    );
-                                    if (!m) return;
-
-                                    setDraft((d) =>
-                                      d ? addAssigned(d, r.shiftId, m) : d,
-                                    );
-                                    e.currentTarget.value = '';
-                                  }}
-                                  disabled={eligibleMembers.length === 0}
-                                  title={
-                                    eligibleMembers.length === 0
-                                      ? 'No eligible members for this shift'
-                                      : undefined
-                                  }
-                                >
-                                  <option value="">+ Add team member…</option>
-                                  {eligibleMembers.map((m) => (
-                                    <option key={m.id} value={m.id}>
-                                      {m.name}
-                                    </option>
-                                  ))}
-                                </select>
-
-                                <div className="text-xs text-neutral-500">
-                                  {r.assigned.length}/{r.required} filled
-                                </div>
-                              </div>
-                            )}
-                          </td>
-
-                          <td className="px-3 py-2">
-                            {r.unfilled > 0 ? (
-                              <span className="text-red-600 font-medium">
-                                {r.unfilled}
-                              </span>
-                            ) : (
-                              '0'
-                            )}
-                          </td>
-                        </tr>
-                        );
-                      })}
-                      {rows.length === 0 && (
-                        <tr>
-                          <td
-                            className="px-3 py-6 text-sm text-neutral-500"
-                            colSpan={7}
-                          >
-                            No shifts found in this schedule.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* Stats */}
               <details className="rounded-lg border p-3" open={!editMode}>
