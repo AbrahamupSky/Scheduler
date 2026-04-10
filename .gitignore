@@ -39,6 +39,7 @@ next-env.d.ts
 
 bun.lock
 .vscode
+.env
 
 # prisma
 /prisma/prisma/dev.db
