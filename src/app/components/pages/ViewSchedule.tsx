@@ -382,20 +382,6 @@ export default function SchedulesPage() {
             Select a team, then view saved schedules.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Link
-            href="/generate"
-            className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
-          >
-            + Generate Schedule
-          </Link>
-          <Link
-            href="/teams/new"
-            className="rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
-          >
-            + Create Team
-          </Link>
-        </div>
       </header>
 
       {error && (

@@ -279,6 +279,10 @@ export default function TeamData({
   const shiftsUploadRef = useRef<HTMLInputElement>(null);
   const [uploadingShifts, setUploadingShifts] = useState(false);
 
+  // drag-over state for the two drop zones
+  const [availDragOver, setAvailDragOver] = useState(false);
+  const [shiftsDragOver, setShiftsDragOver] = useState(false);
+
   // raw CSV rows uploaded by user — displayed exactly as-is
   const [availCsvRawRows, setAvailCsvRawRows] = useState<
     Record<string, string>[] | null
@@ -314,7 +318,6 @@ export default function TeamData({
         if (!effectiveTeamId && data.length > 0) {
           setSelectedTeamId(data[0].id);
           setSelectedTeamName(data[0].name);
-          localStorage.setItem('currentTeamId', String(data[0].id));
         }
       } catch (e: unknown) {
         setTeamsError((e as Error)?.message || 'Unable to fetch teams');
@@ -324,24 +327,40 @@ export default function TeamData({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load persisted CSVs from localStorage whenever the selected team changes
+  // Restore CSV rows from localStorage when the selected team changes,
+  // or clear them if no localStorage data exists for that team.
   useEffect(() => {
     if (!effectiveTeamId) {
       setAvailCsvRawRows(null);
       setShiftCsvRawRows(null);
       return;
     }
+
+    // Persist the active team so Generate page picks it up too
     try {
-      const saved = localStorage.getItem(`avail_csv_${effectiveTeamId}`);
-      setAvailCsvRawRows(saved ? JSON.parse(saved) : null);
+      localStorage.setItem('currentTeamId', String(effectiveTeamId));
     } catch {
-      setAvailCsvRawRows(null);
+      /* non-fatal */
     }
+
+    // Restore shifts CSV
     try {
-      const saved = localStorage.getItem(`shifts_csv_${effectiveTeamId}`);
-      setShiftCsvRawRows(saved ? JSON.parse(saved) : null);
+      const raw = localStorage.getItem(`shifts_csv_${effectiveTeamId}`);
+      setShiftCsvRawRows(
+        raw ? (JSON.parse(raw) as Record<string, string>[]) : null,
+      );
     } catch {
       setShiftCsvRawRows(null);
+    }
+
+    // Restore availability CSV
+    try {
+      const raw = localStorage.getItem(`avail_csv_${effectiveTeamId}`);
+      setAvailCsvRawRows(
+        raw ? (JSON.parse(raw) as Record<string, string>[]) : null,
+      );
+    } catch {
+      setAvailCsvRawRows(null);
     }
   }, [effectiveTeamId]);
 
@@ -369,15 +388,17 @@ export default function TeamData({
           return;
         }
 
-        // Show the raw CSV immediately and persist locally
+        // Show the raw CSV immediately
         setShiftCsvRawRows(rawRows);
+
+        // Persist to localStorage so Generate page reads these rows (not stale DB data)
         try {
           localStorage.setItem(
             `shifts_csv_${effectiveTeamId}`,
             JSON.stringify(rawRows),
           );
         } catch {
-          /* quota exceeded */
+          /* quota exceeded — non-fatal */
         }
 
         // Save to DB in the background so Generate can use it
@@ -446,7 +467,12 @@ export default function TeamData({
     setSelectedTeamId(t.id);
     setSelectedTeamName(t.name);
     setDeleteError(null);
-    localStorage.setItem('currentTeamId', String(t.id));
+    try {
+      localStorage.setItem('currentTeamId', String(t.id));
+    } catch {
+      /* non-fatal */
+    }
+    // CSV rows are restored by the effectiveTeamId effect
   };
 
   const handleCreateTeam = async () => {
@@ -514,15 +540,17 @@ export default function TeamData({
           return;
         }
 
-        // Show raw CSV immediately and persist locally
+        // Show raw CSV immediately
         setAvailCsvRawRows(rawRows);
+
+        // Persist to localStorage so Generate page reads these rows (not stale DB data)
         try {
           localStorage.setItem(
             `avail_csv_${effectiveTeamId}`,
             JSON.stringify(rawRows),
           );
         } catch {
-          /* quota exceeded */
+          /* quota exceeded — non-fatal */
         }
 
         // Save to DB in the background so Generate can use it
@@ -633,10 +661,6 @@ export default function TeamData({
 
       setTeams(data);
 
-      // Remove persisted CSVs for the deleted team
-      localStorage.removeItem(`avail_csv_${effectiveTeamId}`);
-      localStorage.removeItem(`shifts_csv_${effectiveTeamId}`);
-
       // Pick a new team (first) or clear
       if (data.length > 0) {
         setSelectedTeamId(data[0].id);
@@ -644,6 +668,8 @@ export default function TeamData({
       } else {
         setSelectedTeamId(null);
         setSelectedTeamName(null);
+        setAvailCsvRawRows(null);
+        setShiftCsvRawRows(null);
       }
 
       await Swal.fire({
@@ -772,38 +798,6 @@ export default function TeamData({
           </button>
         </div>
 
-        {/* Create team inline form */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <input
-            type="text"
-            value={newTeamName}
-            onChange={(e) => setNewTeamName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleCreateTeam();
-            }}
-            placeholder="New team name…"
-            disabled={creatingTeam}
-            style={{
-              flex: 1,
-              padding: '7px 12px',
-              fontSize: 13,
-              borderRadius: 8,
-              border: '1px solid var(--border)',
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              outline: 'none',
-            }}
-          />
-          <button
-            onClick={handleCreateTeam}
-            disabled={creatingTeam || !newTeamName.trim()}
-            className="btn-primary"
-            style={{ padding: '7px 16px', fontSize: 13, whiteSpace: 'nowrap' }}
-          >
-            {creatingTeam ? 'Creating…' : '+ Create'}
-          </button>
-        </div>
-
         {teamsError && (
           <div
             style={{
@@ -895,6 +889,62 @@ export default function TeamData({
         <p style={{ marginTop: 8, fontSize: 12, color: 'var(--text-3)' }}>
           Select a team to view its availability and shift templates.
         </p>
+
+        {/* Create new team */}
+        <div
+          style={{
+            marginTop: 14,
+            borderTop: '1px solid var(--border)',
+            paddingTop: 14,
+          }}
+        >
+          <p
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: 'var(--text-2)',
+              marginBottom: 8,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}
+          >
+            + New Team
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              placeholder="Team name…"
+              value={newTeamName}
+              onChange={(e) => setNewTeamName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateTeam();
+              }}
+              disabled={creatingTeam}
+              style={{
+                flex: 1,
+                padding: '7px 12px',
+                fontSize: 13,
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleCreateTeam}
+              disabled={creatingTeam || !newTeamName.trim()}
+              className="btn-ghost"
+              style={{
+                padding: '7px 16px',
+                fontSize: 13,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {creatingTeam ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+        </div>
       </section>
 
       {/* Tables */}
@@ -906,7 +956,20 @@ export default function TeamData({
         }}
       >
         {/* Availability */}
-        <section className="card">
+        <section
+          className="card"
+          onDragOver={(e) => { e.preventDefault(); if (effectiveTeamId && !uploadingAvail) setAvailDragOver(true); }}
+          onDragEnter={(e) => { e.preventDefault(); if (effectiveTeamId && !uploadingAvail) setAvailDragOver(true); }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setAvailDragOver(false); }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setAvailDragOver(false);
+            if (!effectiveTeamId || uploadingAvail) return;
+            const f = e.dataTransfer.files?.[0];
+            if (f) handleUploadAvail(f);
+          }}
+          style={availDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: -2 } : undefined}
+        >
           <div
             style={{
               display: 'flex',
@@ -971,13 +1034,6 @@ export default function TeamData({
                     borderCollapse: 'collapse',
                     tableLayout: 'auto',
                   }}
-                ></table>
-                <table
-                  style={{
-                    width: '100%',
-                    fontSize: 13,
-                    borderCollapse: 'collapse',
-                  }}
                 >
                   <thead
                     style={{
@@ -1022,10 +1078,8 @@ export default function TeamData({
                               fontSize: 13,
                               color: 'var(--text)',
                               verticalAlign: 'top',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              maxWidth: 140,
+                              whiteSpace: 'pre-line',
+                              wordBreak: 'break-word',
                             }}
                           >
                             {String(row[k] ?? '')}
@@ -1051,22 +1105,46 @@ export default function TeamData({
             </div>
           ) : (
             <div
+              onClick={() => effectiveTeamId && availUploadRef.current?.click()}
               style={{
-                border: '1px dashed var(--border)',
+                border: `2px dashed ${availDragOver ? 'var(--accent)' : 'var(--border)'}`,
                 borderRadius: 8,
-                padding: 24,
+                padding: 32,
                 fontSize: 13,
-                color: 'var(--text-3)',
+                color: availDragOver ? 'var(--accent-text)' : 'var(--text-3)',
                 textAlign: 'center',
+                cursor: effectiveTeamId ? 'pointer' : 'default',
+                background: availDragOver ? 'var(--accent-soft)' : 'transparent',
+                transition: 'border-color 0.15s, color 0.15s, background 0.15s',
+                userSelect: 'none',
               }}
             >
-              Upload a CSV file to view team availability.
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📂</div>
+              <div style={{ fontWeight: 500, marginBottom: 4 }}>
+                {availDragOver ? 'Drop CSV here' : 'Drag & drop a CSV here'}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                or click <strong>Upload CSV</strong> above
+              </div>
             </div>
           )}
         </section>
 
         {/* Shifts */}
-        <section className="card">
+        <section
+          className="card"
+          onDragOver={(e) => { e.preventDefault(); if (effectiveTeamId && !uploadingShifts) setShiftsDragOver(true); }}
+          onDragEnter={(e) => { e.preventDefault(); if (effectiveTeamId && !uploadingShifts) setShiftsDragOver(true); }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setShiftsDragOver(false); }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setShiftsDragOver(false);
+            if (!effectiveTeamId || uploadingShifts) return;
+            const f = e.dataTransfer.files?.[0];
+            if (f) handleUploadShifts(f);
+          }}
+          style={shiftsDragOver ? { outline: '2px dashed var(--accent)', outlineOffset: -2 } : undefined}
+        >
           <div
             style={{
               display: 'flex',
@@ -1125,9 +1203,11 @@ export default function TeamData({
               >
                 <table
                   style={{
-                    width: '100%',
+                    width: 'max-content',
+                    minWidth: '100%',
                     fontSize: 13,
                     borderCollapse: 'collapse',
+                    tableLayout: 'auto',
                   }}
                 >
                   <thead
@@ -1173,10 +1253,8 @@ export default function TeamData({
                               fontSize: 13,
                               color: 'var(--text)',
                               verticalAlign: 'top',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              maxWidth: 140,
+                              whiteSpace: 'pre-line',
+                              wordBreak: 'break-word',
                             }}
                           >
                             {String(r[k] ?? '')}
@@ -1202,16 +1280,27 @@ export default function TeamData({
             </div>
           ) : (
             <div
+              onClick={() => effectiveTeamId && shiftsUploadRef.current?.click()}
               style={{
-                border: '1px dashed var(--border)',
+                border: `2px dashed ${shiftsDragOver ? 'var(--accent)' : 'var(--border)'}`,
                 borderRadius: 8,
-                padding: 24,
+                padding: 32,
                 fontSize: 13,
-                color: 'var(--text-3)',
+                color: shiftsDragOver ? 'var(--accent-text)' : 'var(--text-3)',
                 textAlign: 'center',
+                cursor: effectiveTeamId ? 'pointer' : 'default',
+                background: shiftsDragOver ? 'var(--accent-soft)' : 'transparent',
+                transition: 'border-color 0.15s, color 0.15s, background 0.15s',
+                userSelect: 'none',
               }}
             >
-              Upload a CSV file to view shift requirements.
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📂</div>
+              <div style={{ fontWeight: 500, marginBottom: 4 }}>
+                {shiftsDragOver ? 'Drop CSV here' : 'Drag & drop a CSV here'}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                or click <strong>Upload CSV</strong> above
+              </div>
             </div>
           )}
         </section>

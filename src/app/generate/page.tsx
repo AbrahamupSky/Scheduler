@@ -259,6 +259,31 @@ function parseRawAvailRows(rows: Record<string,string>[]): MemberAvailability[] 
   return Array.from(map.values());
 }
 
+/* ─────────────────────────── Types ─────────────────────────── */
+type SchedulingRulesType = {
+  minHoursPerWeek: number;
+  maxHoursPerWeek: number;
+  maxDaysPerWeek: number;
+  minRestHours: number;
+  maxShiftHours: number;
+  allowOvertime: boolean;
+  enforceFairness: boolean;
+  preferAvailability: boolean;
+  notes: string | null;
+};
+
+const DEFAULT_RULES: SchedulingRulesType = {
+  minHoursPerWeek: 0,
+  maxHoursPerWeek: 40,
+  maxDaysPerWeek: 6,
+  minRestHours: 10,
+  maxShiftHours: 10,
+  allowOvertime: false,
+  enforceFairness: true,
+  preferAvailability: true,
+  notes: null,
+};
+
 /* ─────────────────────────── Main Component ─────────────────────────── */
 export default function AIScheduleGenerator() {
   const [teams, setTeams] = useState<Team[]>([]);
@@ -267,6 +292,7 @@ export default function AIScheduleGenerator() {
 
   const [members, setMembers] = useState<MemberAvailability[]>([]);
   const [templates, setTemplates] = useState<ShiftTemplate[]>([]);
+  const [schedulingRules, setSchedulingRules] = useState<SchedulingRulesType>(DEFAULT_RULES);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
 
@@ -347,7 +373,13 @@ export default function AIScheduleGenerator() {
       }
     } catch (e) { console.error('[Generate] avail localStorage error', e); }
 
-    if (hadLocalShifts && hadLocalAvail) return; // nothing to fetch from DB
+    // Always fetch scheduling rules (they're never in localStorage)
+    fetch(`/api/teams/${teamId}/rules`, { headers: authHeaders })
+      .then((r) => r.json())
+      .then((d) => { if (d?.rules) setSchedulingRules(d.rules); })
+      .catch(() => {});
+
+    if (hadLocalShifts && hadLocalAvail) return; // nothing else to fetch from DB
 
     setLoading(true);
 
@@ -521,21 +553,47 @@ export default function AIScheduleGenerator() {
       });
     }
 
+    // ── Pre-compute eligible employees per shift (hard availability gate) ──
+    // This runs client-side before the AI ever sees the data, so invalid
+    // assignments are structurally impossible: the AI only receives names
+    // that actually cover the shift window.
+    function computeEligibleNames(dayOfWeek: number, startMin: number, endMin: number): string {
+      const eligible: string[] = [];
+      for (const m of members) {
+        if (!m.windows?.length) {
+          // No availability data recorded → can't exclude them
+          eligible.push(m.name);
+          continue;
+        }
+        const dayWins = m.windows.filter((w) => w.dayOfWeek === dayOfWeek);
+        if (dayWins.length === 0) continue; // has data for other days but not this one → unavailable
+        if (dayWins.some((w) => toMinutes(w.startTime) <= startMin && toMinutes(w.endTime) >= endMin)) {
+          eligible.push(m.name);
+        }
+      }
+      return eligible.join(';');
+    }
+
     // ── Build CSV input for the AI ──
-    const shiftRows = dates.flatMap(({ date, dayName }) =>
+    const shiftRows = dates.flatMap(({ date, dayName, dayOfWeek }) =>
       templates
         .filter((t) =>
           t.day.toLowerCase().startsWith(dayName.toLowerCase().slice(0, 3)),
         )
-        .map((t) => ({
-          Day: dayName,
-          Date: date,
-          Shift: t.shift,
-          JobType: t.jobType,
-          StartTime: t.startTime,
-          EndTime: t.endTime,
-          Required: t.required,
-        })),
+        .map((t) => {
+          const startMin = toMinutes(t.startTime);
+          const endMin = toMinutes(t.endTime);
+          return {
+            Day: dayName,
+            Date: date,
+            Shift: t.shift,
+            JobType: t.jobType,
+            StartTime: t.startTime,
+            EndTime: t.endTime,
+            Required: t.required,
+            EligibleEmployees: computeEligibleNames(dayOfWeek, startMin, endMin),
+          };
+        }),
     );
 
     const availRows: Record<string, string | number>[] = [];
@@ -567,6 +625,8 @@ export default function AIScheduleGenerator() {
     const shiftCsvText = Papa.unparse(shiftRows);
     const availCsvText = Papa.unparse(availRows);
 
+    const sr = schedulingRules ?? DEFAULT_RULES;
+
     const prompt = `You are an expert restaurant scheduler. Generate a complete Mon–Sat schedule from the CSV data below.
 
 === SHIFT REQUIREMENTS ===
@@ -575,14 +635,22 @@ ${shiftCsvText}
 === EMPLOYEE AVAILABILITY ===
 ${availCsvText}
 
+=== SCHEDULING RULES (set by the manager — follow exactly) ===
+Min hours per employee per week: ${sr.minHoursPerWeek}h
+Max hours per employee per week: ${sr.maxHoursPerWeek}h (${sr.allowOvertime ? 'overtime IS allowed — you may exceed this if needed' : 'overtime NOT allowed — do not exceed this'})
+Max days per employee per week: ${sr.maxDaysPerWeek} days
+Min rest between consecutive shifts: ${sr.minRestHours}h
+Max shift length per employee per day: ${sr.maxShiftHours}h (truck carry-over included)
+Balance workload fairly: ${sr.enforceFairness ? 'YES — prioritize employees with fewer cumulative hours' : 'NO — fill shifts without worrying about equal distribution'}${sr.notes ? `\n\nManager notes (read carefully and apply):\n${sr.notes}` : ''}
+
 SCHEDULING RULES:
-1. AVAILABILITY HARD CONSTRAINT — NO EXCEPTIONS. For every assignment you make, look up that employee's row in EMPLOYEE AVAILABILITY for that exact Day. The shift is only valid if: availability StartTime <= shift StartTime AND availability EndTime >= shift EndTime. If this is false by even one minute, do NOT assign them. If there is no availability row for that day, treat it as fully unavailable. Example: if Abraham Urrutia has Saturday StartTime=05:00 EndTime=17:00, he CANNOT be assigned to any Saturday shift ending after 17:00 — not 17:01, not 21:00, not 22:45. Leaving a shift understaffed is correct; assigning someone outside their availability is always wrong.
+1. AVAILABILITY HARD CONSTRAINT — NO EXCEPTIONS. Each shift row in SHIFT REQUIREMENTS contains an EligibleEmployees column that lists the ONLY employees whose availability covers that exact shift window. You MUST assign ONLY names that appear in the EligibleEmployees list for each specific shift. Do NOT assign anyone whose name is absent from that list, even if they appear in the Employee Availability table. If EligibleEmployees has fewer names than Required, assign only those available and explain in Notes — leaving a slot unfilled is correct; assigning someone not on the list is always wrong.
 2. Job type matching is PREFERRED but NOT required. If an employee's job classification matches the shift type (e.g., BOH staff on BOH shifts), prefer that assignment. However, if no matching employees are available, assign any available employee regardless of job type — do NOT leave a shift unstaffed because of job classification alone. Leaders, Directors, and employees without a specific job type can work any shift.
 3. TRUCK CARRY-OVER: If an employee finishes a TRUCK shift at time X and a regular shift starts at exactly time X, they may work both back-to-back with no rest gap required.
-4. For all other consecutive shifts, require at least 10 hours rest between them.
-5. Do NOT exceed 10 hours total per employee per day (truck + carry-over combined).
-6. Respect each employee's MinHoursWeek and MaxHoursWeek.
-7. BALANCE: Assign employees with fewer cumulative weekly hours first to distribute work fairly.
+4. For all other consecutive shifts, require at least ${sr.minRestHours} hours rest between them.
+5. Do NOT exceed ${sr.maxShiftHours} hours total per employee per day (truck + carry-over combined).
+6. Respect each employee's MinHoursWeek and MaxHoursWeek columns from the availability table AND the weekly min/max from the Scheduling Rules section above.
+7. ${sr.enforceFairness ? 'BALANCE: Assign employees with fewer cumulative weekly hours first to distribute work fairly.' : 'STAFFING: Fill each shift with any eligible employee — fairness distribution is not required this week.'}
 8. DAY OFF: Every employee — regardless of role (Team Leader, Director, Team Member, etc.) — must have at least one full day off during the Mon–Sat week. Rules: (a) If an employee's availability already marks them as Unavailable/Off on one or more days, those days ARE their day(s) off — do not force an additional day off, just schedule them normally on the days they are available. (b) Only if an employee is available all 6 days (Mon–Sat) must you leave them unscheduled on at least one of those days. (c) Sunday being closed does NOT count as anyone's day off.
 9. If a slot cannot be filled, still include the shift entry with fewer assigned names and explain in Notes.
 
@@ -603,12 +671,12 @@ Employee,Hours
 <one row per employee with total weekly hours>`;
 
     try {
-      const response = await fetch('/api/anthropic/v1/messages', {
+      const response = await fetch('/api/openai/v1/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 16000,
+          model: 'gpt-5.4-mini',
+          max_completion_tokens: 16000,
           messages: [{ role: 'user', content: prompt }],
         }),
       });
@@ -623,7 +691,7 @@ Employee,Hours
       }
 
       const data = await response.json();
-      const text: string = data.content?.[0]?.text ?? '';
+      const text: string = data.choices?.[0]?.message?.content ?? '';
 
       setRawCsvText(text);
       try {
@@ -722,10 +790,8 @@ Employee,Hours
           if (!dayMap || dayMap.size === 0) return true; // no availability data at all — keep
           const windows = dayMap.get(dayIdx);
           if (!windows || windows.length === 0) {
-            // We have data for OTHER days but not this one → they're off this day
-            // Only apply this if the person has at least data for 2+ days (genuine absence)
-            if (dayMap.size >= 2) return false;
-            return true; // too little data — keep
+            // Has availability data for OTHER days but none for this day → unavailable
+            return false;
           }
           const ss = toMinutes(hhmm24(shiftStart));
           let se = toMinutes(hhmm24(shiftEnd));
