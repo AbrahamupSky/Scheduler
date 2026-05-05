@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/app/lib/prisma';
 
+type RouteParams = Promise<{ id: string }>;
+
 async function getUserFromAuth(req: NextRequest) {
   const auth = req.headers.get('authorization') || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
@@ -15,22 +17,24 @@ async function getUserFromAuth(req: NextRequest) {
   return session?.user ?? null;
 }
 
-function parseTeamId(params: { id: string }) {
-  const teamId = Number(params.id);
+async function parseTeamId(params: RouteParams) {
+  const { id } = await params;
+  const teamId = Number(id);
+
   if (!Number.isFinite(teamId)) return null;
   return teamId;
 }
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: RouteParams }
 ) {
   try {
     const user = await getUserFromAuth(req);
     if (!user)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = parseTeamId(params);
+    const teamId = await parseTeamId(params);
     if (!teamId)
       return NextResponse.json({ error: 'bad team id' }, { status: 400 });
 
@@ -54,14 +58,14 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: RouteParams }
 ) {
   try {
     const user = await getUserFromAuth(req);
     if (!user)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const teamId = parseTeamId(params);
+    const teamId = await parseTeamId(params);
     if (!teamId)
       return NextResponse.json({ error: 'bad team id' }, { status: 400 });
 
@@ -74,8 +78,7 @@ export async function PUT(
 
     const body = await req.json();
 
-    // sanitize/clamp (optional but helpful)
-    const clampInt = (v: any, min: number, max: number, fallback: number) => {
+    const clampInt = (v: unknown, min: number, max: number, fallback: number) => {
       const n = Number(v);
       if (!Number.isFinite(n)) return fallback;
       return Math.max(min, Math.min(max, Math.trunc(n)));
@@ -93,7 +96,6 @@ export async function PUT(
       notes: typeof body.notes === 'string' ? body.notes : null,
     };
 
-    // if overtime is false, keep maxHoursPerWeek meaningful (still fine)
     if (data.maxHoursPerWeek < data.minHoursPerWeek) {
       data.maxHoursPerWeek = data.minHoursPerWeek;
     }
